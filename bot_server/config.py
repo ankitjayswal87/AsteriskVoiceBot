@@ -1,0 +1,4 @@
+BOT_SERVER = '127.0.0.1'
+BOT_PORT = 8080
+LLM_SERVER = 'localhost'
+LLM_PORT = '5006'
