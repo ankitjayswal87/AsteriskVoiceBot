@@ -15,11 +15,15 @@ same = n,Hangup()
 There are three main folders into the repository:
 1) telephony_server
 
-This folder contains telephony_server.py file that holds code for connecting to ARI application and creating of external media channel to stream it over external application. Install the required packages with requirement.txt in the python venv. Run the server via below command. python3 telephony_server.py
+This folder contains telephony_server.py file that holds code for connecting to ARI application and creating of external media channel to stream it over external application. Install the required packages with requirement.txt in the python venv. Run the server via below command.
+
+```python3 telephony_server.py```
 
 2) bot_server
 
-This folder contains bot_server.py file that receives media streams for the call and process it for STT, LLM and TTS operations. Install the required packages with requirement.txt file in the python venv. Run the server via below command. python3 bot_server.py
+This folder contains bot_server.py file that receives media streams for the call and process it for STT, LLM and TTS operations. Install the required packages with requirement.txt file in the python venv. Run the server via below command.
+
+```python3 bot_server.py```
 
 3) prompts
 
