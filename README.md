@@ -3,9 +3,13 @@ This is a voice bot solution which works with ARI interface, that can help you t
 Here is the starting point of your call into Dialplan, the call enters into Stasis dialplan application called 'voicebot-app'.
 
 exten => 1001,1,Answer()
+
 same => n,Set(TALK_DETECT(set)=700,128)
+
 same => n,Stasis(voicebot-app)
+
 same = n,Hangup()
+
 
 There are three main folders into the repository:
 1) telephony_server
