@@ -1,9 +1,9 @@
 USER = 'asterisk' #ARI username
 PASS = 'asterisk' #ARI password
-APP = 'hello-world' #ARI Application name similar to Stasis dialplan application name
-BOT_URL = 'ws://127.0.0.1:8080'
-RTP_SERVER = '0.0.0.0'
-RTP_PORT = 6000
-CODEC = 'ulaw'
-REDIS_HOST = 'localhost'
-REDIS_PORT = 6379
+APP = 'voicebot-app' #ARI Application name similar to Stasis dialplan application name
+BOT_URL = 'ws://127.0.0.1:8080' #Bot url to connect and send streaming events on it
+RTP_SERVER = '0.0.0.0' #Listening media stream on this server
+RTP_PORT = 6000 #Port of media server
+CODEC = 'ulaw' #codec for streaming
+REDIS_HOST = 'localhost' #Redis server
+REDIS_PORT = 6379 #Redis port

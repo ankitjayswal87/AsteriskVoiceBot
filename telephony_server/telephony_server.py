@@ -226,7 +226,7 @@ async def main():
 	
 	#bot_listener_task = asyncio.create_task(listen_to_bot_message(ws_bot_client))
 	udp_task = asyncio.create_task(udp_server())
-	ari_task = asyncio.create_task(ari_events(user="asterisk", password="asterisk", app="hello-world"))
+	ari_task = asyncio.create_task(ari_events(user=cfg.USER, password=cfg.PASS, app=cfg.APP))
 	await asyncio.gather(udp_task, ari_task)
 
 if __name__ == "__main__":
