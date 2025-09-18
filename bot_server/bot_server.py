@@ -25,7 +25,7 @@ def raw_to_wav_stt(input_file,output_file):
 
     try:
         subprocess.run(command, stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=True)
-        print("Conversion successful.")
+        #print("Conversion successful.")
     except subprocess.CalledProcessError as e:
         print("Error during conversion:", e)
 
@@ -49,7 +49,7 @@ def speech_to_text(api_key,input_file,output_file,tts_file,tts_file_new):
 
 def text_to_speech(api_key,voice,text_data,file_name):
     client = OpenAI(api_key=api_key)
-    print("New TTS Calling")
+    #print("New TTS Calling")
     try:
         input_file = "/tmp/"+file_name+"_tts.pcm"
         output_file = "/tmp/"+file_name+"_tts_new.raw"
@@ -62,7 +62,7 @@ def text_to_speech(api_key,voice,text_data,file_name):
             command = ["ffmpeg","-f", "s16le","-ar", "24000","-ac", "1","-i", input_file,"-ar", "8000","-ac", "1","-f", "s16le",output_file] #["ffmpeg","-i", input_file,"-ar", "8000",output_file]
             try:
                 subprocess.run(command, stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=True)
-                print("text to speech done")
+                #print("text to speech done")
                 return True
             except subprocess.CalledProcessError as e:
                 print("Error during conversion:", e)
@@ -89,7 +89,7 @@ def text_to_speech_old(api_key,voice,text_data,file_name):
             command = ["ffmpeg","-i", input_file,"-ar", "8000",output_file]
             try:
                 subprocess.run(command, stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=True)
-                print("text to speech done")
+                #print("text to speech done")
                 return True
             except subprocess.CalledProcessError as e:
                 print("Error during conversion:", e)
@@ -110,7 +110,7 @@ def llm_query(LLM_SERVER,LLM_PORT,vector_db,stt_data):
     return data['response']
 
 async def handle_voice_stream(websocket):
-    print("Client connected")
+    print("Call connected to Bot")
     try:
         async for message in websocket:
             message = json.loads(message)
@@ -131,7 +131,6 @@ async def handle_voice_stream(websocket):
             elif event=='talk_end':
                 #print(message)
                 call_id = message['talk_end']['callSid']
-                #print("CallId:"+str(call_id))
                 input_file = '/tmp/'+call_id+'.raw'
                 output_file = '/tmp/'+call_id+'.wav'
                 # tts_file = '/tmp/'+call_id+'_tts.wav'
@@ -145,25 +144,25 @@ async def handle_voice_stream(websocket):
 
                     # STT
                     now = datetime.now()
-                    print("STT Start:", now.strftime("%H:%M:%S"))
+                    #print("STT Start:", now.strftime("%H:%M:%S"))
                     stt_data = speech_to_text(os.getenv("OPENAI_API_KEY"),input_file,output_file,tts_file,tts_file_new)
                     now = datetime.now()
-                    print("STT END:", now.strftime("%H:%M:%S"))
+                    #print("STT END:", now.strftime("%H:%M:%S"))
                     print("STT Data: "+stt_data)
 
                     if stt_data:
                         # LLM query
                         now = datetime.now()
-                        print("LLM Start:", now.strftime("%H:%M:%S"))
+                        #print("LLM Start:", now.strftime("%H:%M:%S"))
                         tts_data = llm_query(LLM_SERVER,LLM_PORT,"openai_vector_data",stt_data)
                         now = datetime.now()
-                        print("LLM END:", now.strftime("%H:%M:%S"))
+                        #print("LLM END:", now.strftime("%H:%M:%S"))
                         print("LLM Answer: "+tts_data)
 
                         #TTS
                         tts_done = text_to_speech(os.getenv("OPENAI_API_KEY"),"nova",tts_data,call_id)
                         now = datetime.now()
-                        print("TTS END:", now.strftime("%H:%M:%S"))
+                        #print("TTS END:", now.strftime("%H:%M:%S"))
                         if tts_done:
                             tts_event = {'event':'tts','sequenceNumber': 2,'tts':{'callSid':call_id,'reason':'','stt':True},'streamSid':''}
                             await websocket.send(json.dumps(tts_event))
@@ -176,14 +175,15 @@ async def handle_voice_stream(websocket):
 
             elif event=='stop':
                 call_id = message['stop']['callSid']
-                await websocket.close()
+                #await websocket.close()
                 #print("Stop:"+call_id)
     except websockets.exceptions.ConnectionClosed:
         pass
     except Exception as e:
         print(f"Unhandled server error: {e}")
     finally:
-        print("Client disconnected")
+        print("Call disconnected")
+        #await websocket.close()
 
 async def main():
     async with websockets.serve(handle_voice_stream, HOST, PORT):
