@@ -21,7 +21,7 @@ ws_bot_url = cfg.BOT_URL #'ws://127.0.0.1:8080'
 ws_bot_client = None
 
 current_dir = os.getcwd()
-prompt_path = current_dir+"/prompts/"
+prompt_path = os.path.join(current_dir, "..", "prompts/")
 channel_playbacks = {}
 external_media_channels = {}
 
