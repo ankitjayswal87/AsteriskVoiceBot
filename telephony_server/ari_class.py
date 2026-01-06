@@ -164,7 +164,33 @@ class ARIClass:
 		#port = response['channelvars']['UNICASTRTP_LOCAL_PORT']
 		#print("PORT:"+str(port))
 		return response
-		
+
+	def get_channel_variable(self,channelid,variable_name):
+		import requests
+		import json
+		url = "http://localhost:8088/ari/channels/"+str(channelid)+"/variable?variable="+str(variable_name)
+		payload={}
+		headers = {'Authorization': 'Basic YXN0ZXJpc2s6YXN0ZXJpc2s='}
+		response = requests.request("GET", url, headers=headers, data=payload)
+		response = json.loads(response.content.decode('utf-8'))
+		if 'value' in response:
+			response = response['value']
+		else:
+			response = None
+		return response
+
+	def create_snoop_channel(self,channelid,snoopid,spy,whisper,app):
+		import requests
+		import json
+		#url = "http://localhost:8088/ari/channels/externalMedia?app=hello-world&external_host=127.0.0.1:6000&format=ulaw"
+		url = "http://localhost:8088/ari/channels/"+str(channelid)+"/snoop/"+str(snoopid)+"?spy="+str(spy)+"&whisper="+str(whisper)+"&app="+str(app)
+		payload={}
+		headers = {'Authorization': 'Basic YXN0ZXJpc2s6YXN0ZXJpc2s='}
+		response = requests.request("POST", url, headers=headers, data=payload)
+		response = json.loads(response.text)
+		#print("SnoopChanId:"+response['id'])
+		response = response['id']
+		return response
 
 	def hangup_call(self,channelid):
 		import requests
