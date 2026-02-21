@@ -43,6 +43,23 @@ asterisk -rvvvv
 core reload
 ```
 
+# Installation
+
+Here, few impotant pacakges are required to be installed. Follow below steps to intall it.
+Installing Redis Server,
+```
+apt install redis-server -y
+redis-server --version
+systemctl start redis-server
+systemctl enable redis-server
+systemctl status redis-server
+```
+
+Installing ffmpeg,
+```
+apt install ffmpeg -y
+```
+
 # Code setup
 
 There are three main folders into the repository:
