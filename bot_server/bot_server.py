@@ -29,7 +29,40 @@ def raw_to_wav_stt(input_file,output_file):
     except subprocess.CalledProcessError as e:
         print("Error during conversion:", e)
 
-def speech_to_text(api_key,input_file,output_file,tts_file,tts_file_new):
+def speech_to_text(api_key, input_file, output_file, tts_file, tts_file_new):
+    stt_data = None
+    try:
+        # Initialize OpenAI client
+        client = OpenAI(api_key=api_key)
+
+        # STT for the user input
+        with open(output_file, "rb") as audio_file:
+            transcription = client.audio.transcriptions.create(
+                model="gpt-4o-transcribe",
+                file=audio_file
+            )
+        stt_data = transcription.text
+
+    except FileNotFoundError as fe:
+        print(f"File not found: {fe}")
+        stt_data = "I am not able to understand properly, please repeat"
+    except Exception as e:
+        print(f"Error during transcription: {e}")
+        stt_data = "can you please speak again, I did not catch it properly"
+
+    finally:
+        # Cleanup files safely
+        for f in [input_file, output_file, tts_file, tts_file_new]:
+            try:
+                if os.path.exists(f):
+                    os.remove(f)
+                    #print(f"Deleted {f}")
+            except Exception as cleanup_err:
+                print(f"Error deleting file {f}: {cleanup_err}")
+
+    return stt_data
+
+def speech_to_text_old(api_key,input_file,output_file,tts_file,tts_file_new):
     # STT for the user input
     client = OpenAI(api_key=api_key)
     with open(output_file, "rb") as audio_file:
@@ -102,6 +135,14 @@ def text_to_speech_old(api_key,voice,text_data,file_name):
         return False
 
 def llm_query(LLM_SERVER,LLM_PORT,vector_db,stt_data):
+    url = "http://"+LLM_SERVER+":"+LLM_PORT+"/agentic_ai/bus_booking"
+    payload = json.dumps({"thread_id": "call123abc","query": stt_data,"model": "openai"})
+    headers = {'Content-Type': 'application/json'}
+    response = requests.request("POST", url, headers=headers, data=payload)
+    data = json.loads(response.text)
+    return data['response']
+
+def llm_query_old(LLM_SERVER,LLM_PORT,vector_db,stt_data):
     url = "http://"+LLM_SERVER+":"+LLM_PORT+"/lang_chain_api/ask_to_vector_db_rag"
     payload = json.dumps({"vector_db": vector_db,"query": stt_data})
     headers = {'Content-Type': 'application/json'}

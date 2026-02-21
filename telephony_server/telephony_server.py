@@ -158,7 +158,7 @@ async def ari_events(user,password,app):
 					ari.add_channel_in_bridge(bridge_id,incoming_sip_channel_id)
 					ari.add_channel_in_bridge(bridge_id,external_media_channelid)
 					# set here your welcome prompt
-					ari.play_prompt(incoming_sip_channel_id,prompt_path+'welcome_new')
+					ari.play_prompt(incoming_sip_channel_id,prompt_path+'welcome_bus_new')
 			
 			elif(event_type=='ChannelDtmfReceived'):
 				channelid = msg['channel']['id']
