@@ -86,9 +86,17 @@ async def process_stream_data(key,rtp_payload):
             start_event = {'event':'start','sequenceNumber':1,'start':{'accountSid':'1234','streamSid':'','callSid':call_id,'from':caller_number,'to':did_number,'mediaFormat':{'encoding':'audio/x-mulaw','sampleRate': 8000,'bitRate': 64, 'bitDepth':8}},'streamSid':''}
             media_event = {'event': 'media','sequenceNumber': 2,'media': {'chunk': 1,'timestamp': 208,'callSid':call_id,'payload': base64_string},'streamSid': 'vkslvs'}
             stop_event = {'event':'stop','sequenceNumber': 2,'stop':{'callSid':call_id,'reason':'call_disconnected'},'streamSid':''}
-            if ws_bot_client:
+            # if ws_bot_client:
+            #     await ws_bot_client.send(json.dumps(media_event))
+            #     #await ws.close(code=1000, reason="Client done")
+            if ws_bot_client is None:
+                await connect_bot_websocket()
+            try:
                 await ws_bot_client.send(json.dumps(media_event))
-                #await ws.close(code=1000, reason="Client done")
+            except websockets.exceptions.ConnectionClosed:
+                print("Reconnecting after close...")
+                await connect_bot_websocket()
+                await ws_bot_client.send(json.dumps(media_event))
         else:
 			# get data from redis and set in cache to retrieve frequently later
             r = redis.Redis(host=cfg.REDIS_HOST, port=cfg.REDIS_PORT, db=0)
@@ -145,7 +153,7 @@ async def ari_events(user,password,app):
 					response = ari.create_external_media(cfg.APP,cfg.RTP_SERVER+":"+str(cfg.RTP_PORT),cfg.CODEC)
 					external_media_channelid = response['id']
 					port = response['channelvars']['UNICASTRTP_LOCAL_PORT']
-					#print("CREATE:"+external_media_channelid)
+					print("CREATE:"+external_media_channelid)
 					external_media_channels[incoming_sip_channel_id] = external_media_channelid
 
 					# Setting callid and port mapping
