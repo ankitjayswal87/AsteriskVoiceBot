@@ -7,6 +7,7 @@ import base64
 import os
 import time
 import subprocess
+import langid
 #import threading
 #import queue
 #import shutil
@@ -19,6 +20,10 @@ HOST = cfg.BOT_SERVER
 PORT = cfg.BOT_PORT
 LLM_SERVER = cfg.LLM_SERVER
 LLM_PORT = cfg.LLM_PORT
+
+def is_english(text):
+    lang, confidence = langid.classify(text)
+    return lang == 'en' or lang == 'hi'
 
 def raw_to_wav_stt(input_file,output_file):
     command = ["ffmpeg","-f", "mulaw","-ar", "8000","-ac", "1","-i", input_file,output_file]
@@ -190,8 +195,9 @@ async def handle_voice_stream(websocket):
                     now = datetime.now()
                     #print("STT END:", now.strftime("%H:%M:%S"))
                     print("STT Data: "+stt_data)
+                    is_valid_lang = is_english(stt_data)
 
-                    if stt_data:
+                    if stt_data and is_valid_lang:
                         # LLM query
                         now = datetime.now()
                         #print("LLM Start:", now.strftime("%H:%M:%S"))
@@ -211,13 +217,18 @@ async def handle_voice_stream(websocket):
                             tts_event = {'event':'tts','sequenceNumber': 2,'tts':{'callSid':call_id,'reason':'','stt':False},'streamSid':''}
                             await websocket.send(json.dumps(tts_event))
                     else:
-                        tts_event = {'event':'tts','sequenceNumber': 2,'tts':{'callSid':call_id,'reason':'','stt':False},'streamSid':''}
-                        await websocket.send(json.dumps(tts_event))
+                        tts_done = text_to_speech(os.getenv("OPENAI_API_KEY"),"nova","I am not able to understand you, please repeat",call_id)
+                        if tts_done:
+                            tts_event = {'event':'tts','sequenceNumber': 2,'tts':{'callSid':call_id,'reason':'','stt':True},'streamSid':''}
+                            await websocket.send(json.dumps(tts_event))
+                        else:
+                            tts_event = {'event':'tts','sequenceNumber': 2,'tts':{'callSid':call_id,'reason':'','stt':False},'streamSid':''}
+                            await websocket.send(json.dumps(tts_event))
 
             elif event=='stop':
                 call_id = message['stop']['callSid']
                 #await websocket.close()
-                #print("Stop:"+call_id)
+                print("Stop:"+call_id)
     except websockets.exceptions.ConnectionClosed:
         pass
     except Exception as e:
