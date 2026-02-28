@@ -21,6 +21,8 @@ PORT = cfg.BOT_PORT
 LLM_SERVER = cfg.LLM_SERVER
 LLM_PORT = cfg.LLM_PORT
 
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
 def is_english(text):
     lang, confidence = langid.classify(text)
     return lang == 'en' or lang == 'hi'
@@ -38,7 +40,7 @@ def speech_to_text(api_key, input_file, output_file, tts_file, tts_file_new):
     stt_data = None
     try:
         # Initialize OpenAI client
-        client = OpenAI(api_key=api_key)
+        #client = OpenAI(api_key=api_key)
 
         # STT for the user input
         with open(output_file, "rb") as audio_file:
@@ -86,14 +88,14 @@ def speech_to_text_old(api_key,input_file,output_file,tts_file,tts_file_new):
     return stt_data
 
 def text_to_speech(api_key,voice,text_data,file_name):
-    client = OpenAI(api_key=api_key)
+    #client = OpenAI(api_key=api_key)
     #print("New TTS Calling")
     try:
         input_file = "/tmp/"+file_name+"_tts.pcm"
         output_file = "/tmp/"+file_name+"_tts_new.raw"
-        with client.audio.speech.with_streaming_response.create(model="tts-1",voice="nova",input=text_data,response_format="pcm") as response:
+        with client.audio.speech.with_streaming_response.create(model="gpt-4o-mini-tts",voice="nova",input=text_data,response_format="pcm") as response:
             with open(input_file, "wb") as f:
-                for chunk in response.iter_bytes(chunk_size=480):
+                for chunk in response.iter_bytes(chunk_size=4096):
                     f.write(chunk)
             
         if os.path.exists(input_file):

@@ -199,7 +199,7 @@ async def ari_events(user,password,app):
                 talk_end_event = {'event':'talk_end','talk_end':{'accountSid':'1234','streamSid':'','callSid':talk_end_channel_id,'from':'','to':''},'streamSid':''}
                 await ws_bot_client.send(json.dumps(talk_end_event))
                 random_filler_prompt = random.choice(filler_prompts)
-                time.sleep(1)
+                time.sleep(2)
                 # play random filler prompt here
                 ari.play_prompt(talk_end_channel_id,prompt_path+random_filler_prompt)
                 
