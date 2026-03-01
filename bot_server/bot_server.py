@@ -16,16 +16,22 @@ from openai import OpenAI
 #import io
 import config as cfg
 
+#read config parameters
 HOST = cfg.BOT_SERVER
 PORT = cfg.BOT_PORT
 LLM_SERVER = cfg.LLM_SERVER
 LLM_PORT = cfg.LLM_PORT
+STT_MODEL = cfg.STT_MODEL
+TTS_MODEL = cfg.TTS_MODEL
+TTS_VOICE = cfg.TTS_VOICE
 
+#create openai client on bot server start
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+#detects language in stt data - allows to control enable/disable language support
 def is_english(text):
     lang, confidence = langid.classify(text)
-    return lang == 'en' or lang == 'hi'
+    return lang == 'en' or lang == 'hi' or lang == 'gu'
 
 def raw_to_wav_stt(input_file,output_file):
     command = ["ffmpeg","-f", "mulaw","-ar", "8000","-ac", "1","-i", input_file,output_file]
@@ -36,6 +42,7 @@ def raw_to_wav_stt(input_file,output_file):
     except subprocess.CalledProcessError as e:
         print("Error during conversion:", e)
 
+#performs stt operation
 def speech_to_text(api_key, input_file, output_file, tts_file, tts_file_new):
     stt_data = None
     try:
@@ -45,7 +52,7 @@ def speech_to_text(api_key, input_file, output_file, tts_file, tts_file_new):
         # STT for the user input
         with open(output_file, "rb") as audio_file:
             transcription = client.audio.transcriptions.create(
-                model="gpt-4o-transcribe",
+                model=STT_MODEL,
                 file=audio_file
             )
         stt_data = transcription.text
@@ -73,7 +80,7 @@ def speech_to_text_old(api_key,input_file,output_file,tts_file,tts_file_new):
     # STT for the user input
     client = OpenAI(api_key=api_key)
     with open(output_file, "rb") as audio_file:
-        transcription = client.audio.transcriptions.create(model="gpt-4o-transcribe",file=audio_file)
+        transcription = client.audio.transcriptions.create(model=STT_MODEL,file=audio_file)
 
     stt_data = transcription.text
     #print(stt_data)
@@ -87,13 +94,14 @@ def speech_to_text_old(api_key,input_file,output_file,tts_file,tts_file_new):
         os.remove(tts_file_new)
     return stt_data
 
+#performs tts operation
 def text_to_speech(api_key,voice,text_data,file_name):
     #client = OpenAI(api_key=api_key)
     #print("New TTS Calling")
     try:
         input_file = "/tmp/"+file_name+"_tts.pcm"
         output_file = "/tmp/"+file_name+"_tts_new.raw"
-        with client.audio.speech.with_streaming_response.create(model="gpt-4o-mini-tts",voice="nova",input=text_data,response_format="pcm") as response:
+        with client.audio.speech.with_streaming_response.create(model=TTS_MODEL,voice=TTS_VOICE,input=text_data,response_format="pcm") as response:
             with open(input_file, "wb") as f:
                 for chunk in response.iter_bytes(chunk_size=4096):
                     f.write(chunk)
@@ -141,6 +149,7 @@ def text_to_speech_old(api_key,voice,text_data,file_name):
         print("tts not done")
         return False
 
+#performs intelligence lookup for reply
 def llm_query(LLM_SERVER,LLM_PORT,vector_db,stt_data):
     url = "http://"+LLM_SERVER+":"+LLM_PORT+"/agentic_ai/bus_booking"
     payload = json.dumps({"thread_id": "call123abc","query": stt_data,"model": "openai"})
@@ -209,7 +218,7 @@ async def handle_voice_stream(websocket):
                         print("LLM Answer: "+tts_data)
 
                         #TTS
-                        tts_done = text_to_speech(os.getenv("OPENAI_API_KEY"),"nova",tts_data,call_id)
+                        tts_done = text_to_speech(os.getenv("OPENAI_API_KEY"),TTS_VOICE,tts_data,call_id)
                         now = datetime.now()
                         #print("TTS END:", now.strftime("%H:%M:%S"))
                         if tts_done:
@@ -219,7 +228,7 @@ async def handle_voice_stream(websocket):
                             tts_event = {'event':'tts','sequenceNumber': 2,'tts':{'callSid':call_id,'reason':'','stt':False},'streamSid':''}
                             await websocket.send(json.dumps(tts_event))
                     else:
-                        tts_done = text_to_speech(os.getenv("OPENAI_API_KEY"),"nova","I am not able to understand you, please repeat",call_id)
+                        tts_done = text_to_speech(os.getenv("OPENAI_API_KEY"),TTS_VOICE,"I am not able to understand you, please repeat",call_id)
                         if tts_done:
                             tts_event = {'event':'tts','sequenceNumber': 2,'tts':{'callSid':call_id,'reason':'','stt':True},'streamSid':''}
                             await websocket.send(json.dumps(tts_event))
