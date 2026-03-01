@@ -24,6 +24,7 @@ LLM_PORT = cfg.LLM_PORT
 STT_MODEL = cfg.STT_MODEL
 TTS_MODEL = cfg.TTS_MODEL
 TTS_VOICE = cfg.TTS_VOICE
+LANGUAGE_SUPPORT = cfg.LANGUAGE_SUPPORT
 
 #create openai client on bot server start
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -31,7 +32,11 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 #detects language in stt data - allows to control enable/disable language support
 def is_english(text):
     lang, confidence = langid.classify(text)
-    return lang == 'en' or lang == 'hi' or lang == 'gu'
+    if lang in LANGUAGE_SUPPORT:
+        return True,lang
+    else:
+        return False,lang
+    #return lang == 'en' or lang == 'hi' or lang == 'gu'
 
 def raw_to_wav_stt(input_file,output_file):
     command = ["ffmpeg","-f", "mulaw","-ar", "8000","-ac", "1","-i", input_file,output_file]
@@ -206,9 +211,11 @@ async def handle_voice_stream(websocket):
                     now = datetime.now()
                     #print("STT END:", now.strftime("%H:%M:%S"))
                     print("STT Data: "+stt_data)
-                    is_valid_lang = is_english(stt_data)
+                    lang_status,lang = is_english(stt_data)
 
-                    if stt_data and is_valid_lang:
+                    if stt_data and lang_status:
+                        stt_event = {'event':'stt','sequenceNumber': 2,'stt':{'callSid':call_id,'reason':'','language':lang},'streamSid':''}
+                        await websocket.send(json.dumps(stt_event))
                         # LLM query
                         now = datetime.now()
                         #print("LLM Start:", now.strftime("%H:%M:%S"))

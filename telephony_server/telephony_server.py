@@ -25,7 +25,11 @@ prompt_path = os.path.join(current_dir, "..", "prompts/")
 channel_playbacks = {}
 external_media_channels = {}
 
-filler_prompts = ["give_me_sec_new", "just_moment_new", "wait_new"]
+#filler_prompts = ["give_me_sec_new", "just_moment_new", "wait_new"]
+filler_prompts = {
+    "en": ["give_me_sec_new", "just_moment_new", "wait_new"],
+    "hi": ["wait_a_moment_hindi_new", "give_me_moment_hindi_new"]
+}
 
 async def connect_bot_websocket():
     global ws_bot_client
@@ -36,14 +40,17 @@ async def connect_bot_websocket():
         print("Websocket connection error:", e)
 
 async def listen_to_bot_message(websocket):
+    import random
     try:
         while True:
             message = await websocket.recv()
             message = json.loads(message)
             event = message['event']
-            call_id = message['tts']['callSid']
-            stt_flag = message['tts']['stt']
+            # call_id = message['tts']['callSid']
+            # stt_flag = message['tts']['stt']
             if event=='tts':
+                call_id = message['tts']['callSid']
+                stt_flag = message['tts']['stt']
                 if stt_flag==False:
                     # set here the not able to understand message
                     ari.play_prompt(call_id,prompt_path+'clear_loud_new')
@@ -51,6 +58,12 @@ async def listen_to_bot_message(websocket):
                     # playback the bot response here
                     tts_file = "/tmp/"+call_id+"_tts_new"
                     response = ari.play_prompt(call_id,tts_file)
+            elif event=='stt':
+                call_id = message['stt']['callSid']
+                language = message['stt']['language']
+                filler_prompt_array = filler_prompts.get(language)
+                random_filler_prompt = random.choice(filler_prompt_array)
+                response = ari.play_prompt(call_id,prompt_path+random_filler_prompt)
     except websockets.exceptions.ConnectionClosed:
         print("Connection closed")
 
@@ -198,10 +211,10 @@ async def ari_events(user,password,app):
                 #ari.play_music_on_hold(incoming_sip_channel_id,"default")
                 talk_end_event = {'event':'talk_end','talk_end':{'accountSid':'1234','streamSid':'','callSid':talk_end_channel_id,'from':'','to':''},'streamSid':''}
                 await ws_bot_client.send(json.dumps(talk_end_event))
-                random_filler_prompt = random.choice(filler_prompts)
-                time.sleep(2)
+                #random_filler_prompt = random.choice(filler_prompts)
+                #time.sleep(2)
                 # play random filler prompt here
-                ari.play_prompt(talk_end_channel_id,prompt_path+random_filler_prompt)
+                #ari.play_prompt(talk_end_channel_id,prompt_path+random_filler_prompt)
                 
             elif(event_type=='StasisEnd'):
                 call_id = msg['channel']['id']
