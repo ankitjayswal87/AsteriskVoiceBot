@@ -5,4 +5,4 @@ LLM_PORT = '5006'
 STT_MODEL = 'gpt-4o-transcribe'
 TTS_MODEL = 'gpt-4o-mini-tts'
 TTS_VOICE = 'nova'
-LANGUAGE_SUPPORT = ['en','hi']
+LANGUAGE_SUPPORT = ['en','hi','gu']

@@ -7,3 +7,6 @@ RTP_PORT = 6000 #Port of media server
 CODEC = 'ulaw' #codec for streaming
 REDIS_HOST = 'localhost' #Redis server
 REDIS_PORT = 6379 #Redis port
+EN_FILLER_ARRAY = ["give_me_sec_new", "just_moment_new", "wait_new"]
+HI_FILLER_ARRAY = ["wait_a_moment_hindi_new", "give_me_moment_hindi_new"]
+GU_FILLER_ARRAY = ["give_me_sec_gujarati_new","give_me_some_time_gujarati_new"]

@@ -27,8 +27,9 @@ external_media_channels = {}
 
 #filler_prompts = ["give_me_sec_new", "just_moment_new", "wait_new"]
 filler_prompts = {
-    "en": ["give_me_sec_new", "just_moment_new", "wait_new"],
-    "hi": ["wait_a_moment_hindi_new", "give_me_moment_hindi_new"]
+    "en": cfg.EN_FILLER_ARRAY,
+    "hi": cfg.HI_FILLER_ARRAY,
+    "gu": cfg.GU_FILLER_ARRAY
 }
 
 async def connect_bot_websocket():
