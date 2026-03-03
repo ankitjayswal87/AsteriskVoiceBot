@@ -24,6 +24,7 @@ current_dir = os.getcwd()
 prompt_path = os.path.join(current_dir, "..", "prompts/")
 channel_playbacks = {}
 external_media_channels = {}
+bridges = {}
 
 #filler_prompts = ["give_me_sec_new", "just_moment_new", "wait_new"]
 filler_prompts = {
@@ -177,6 +178,7 @@ async def ari_events(user,password,app):
                     
                     # create bridge and add SIP,ExternalMedia channels into the bridge
                     bridge_id = ari.create_bridge(unique_id,"mixing")
+                    bridges[incoming_sip_channel_id] = bridge_id
                     ari.add_channel_in_bridge(bridge_id,incoming_sip_channel_id)
                     ari.add_channel_in_bridge(bridge_id,external_media_channelid)
                     # set here your welcome prompt
@@ -222,7 +224,10 @@ async def ari_events(user,password,app):
                 channel_name = msg['channel']['name']
                 channel_name = channel_name.split("/")[0]
                 external_media_channelid = external_media_channels.get(call_id)
-                ari.delete_bridge(bridge_id)
+                bridge_id = bridges.get(call_id)
+                if bridge_id:
+                    del bridges[call_id]
+                    ari.delete_bridge(bridge_id)
                 if external_media_channelid:
                     #print("END:"+str(external_media_channelid))
                     del external_media_channels[call_id]
