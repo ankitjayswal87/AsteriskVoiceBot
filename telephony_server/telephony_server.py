@@ -200,14 +200,14 @@ async def ari_events(user,password,app):
 
             elif(event_type=='ChannelTalkingStarted'):
                 playback_channel_id = msg['channel']['id']
-                playback_id = channel_playbacks.get(playback_channel_id)
+                
                 if playback_channel_id in channel_playbacks:
+                    playback_id = channel_playbacks.get(playback_channel_id)
                     del channel_playbacks[playback_channel_id]
-
-                #ari.add_channel_in_bridge(bridge_id,incoming_sip_channel_id)
-                if playback_id:
                     # interrupt handling
                     ari.stop_prompt(playback_id)
+
+                #ari.add_channel_in_bridge(bridge_id,incoming_sip_channel_id)
             elif(event_type=='ChannelTalkingFinished'):
                 talk_end_channel_id = msg['channel']['id']
                 #ari.remove_channel_from_bridge(bridge_id,incoming_sip_channel_id)
@@ -223,13 +223,14 @@ async def ari_events(user,password,app):
                 call_id = msg['channel']['id']
                 channel_name = msg['channel']['name']
                 channel_name = channel_name.split("/")[0]
-                external_media_channelid = external_media_channels.get(call_id)
-                bridge_id = bridges.get(call_id)
-                if bridge_id:
+                
+                if call_id in bridges:
+                    bridge_id = bridges.get(call_id)
                     del bridges[call_id]
                     ari.delete_bridge(bridge_id)
-                if external_media_channelid:
+                if call_id in external_media_channels:
                     #print("END:"+str(external_media_channelid))
+                    external_media_channelid = external_media_channels.get(call_id)
                     del external_media_channels[call_id]
                     ari.hangup_call(str(external_media_channelid))
                 # if call_id in external_media_channels:
