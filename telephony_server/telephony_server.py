@@ -65,6 +65,7 @@ async def listen_to_bot_message(websocket):
                 language = message['stt']['language']
                 filler_prompt_array = filler_prompts.get(language)
                 random_filler_prompt = random.choice(filler_prompt_array)
+                time.sleep(1)
                 response = ari.play_prompt(call_id,prompt_path+random_filler_prompt)
     except websockets.exceptions.ConnectionClosed:
         print("Connection closed")

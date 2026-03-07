@@ -10,6 +10,6 @@ EXTERNAL_APP_SERVER = '127.0.0.1' # 13.233.208.0 this is IP of server where your
 CODEC = 'ulaw' #codec for streaming
 REDIS_HOST = 'localhost' #Redis server
 REDIS_PORT = 6379 #Redis port
-EN_FILLER_ARRAY = ["give_me_sec_new", "just_moment_new", "wait_new"]
+EN_FILLER_ARRAY = ["okay_fine_new","checking_that_for_new"]
 HI_FILLER_ARRAY = ["wait_a_moment_hindi_new", "give_me_moment_hindi_new"]
 GU_FILLER_ARRAY = ["give_me_sec_gujarati_new","give_me_some_time_gujarati_new"]
