@@ -141,7 +141,8 @@ async def process_stream_data(key,rtp_payload):
 async def ari_events(user,password,app):
     # Websocket connection to ARI App
     #url = "ws://localhost:8088/ari/events?api_key=asterisk:asterisk&app=hello-world"
-    url = "ws://localhost:8088/ari/events?api_key="+user+":"+password+"&app="+app
+    #url = "ws://localhost:8088/ari/events?api_key="+user+":"+password+"&app="+app
+    url = "ws://"+cfg.ASTERISK_SERVER+":"+cfg.ASTERISK_PORT+"/ari/events?api_key="+user+":"+password+"&app="+app
     async with websockets.connect(url) as ws:
         unique_id = str(uuid.uuid4())
         while True:
@@ -165,7 +166,8 @@ async def ari_events(user,password,app):
                     
                     incoming_sip_channel_id = channelid
                     #ari.play_prompt(incoming_sip_channel_id,prompt_path+'welcome_new')
-                    response = ari.create_external_media(cfg.APP,cfg.RTP_SERVER+":"+str(cfg.RTP_PORT),cfg.CODEC)
+                    #response = ari.create_external_media(cfg.APP,cfg.RTP_SERVER+":"+str(cfg.RTP_PORT),cfg.CODEC)
+                    response = ari.create_external_media(cfg.APP,cfg.EXTERNAL_APP_SERVER+":"+str(cfg.RTP_PORT),cfg.CODEC)
                     external_media_channelid = response['id']
                     port = response['channelvars']['UNICASTRTP_LOCAL_PORT']
                     print("CREATE:"+external_media_channelid)
