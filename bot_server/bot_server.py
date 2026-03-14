@@ -30,7 +30,7 @@ LANGUAGE_SUPPORT = cfg.LANGUAGE_SUPPORT
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 #detects language in stt data - allows to control enable/disable language support
-def is_english(text):
+def is_supported_language(text):
     lang, confidence = langid.classify(text)
     if lang in LANGUAGE_SUPPORT:
         return True,lang
@@ -211,10 +211,10 @@ async def handle_voice_stream(websocket):
                     now = datetime.now()
                     #print("STT END:", now.strftime("%H:%M:%S"))
                     print("STT Data: "+stt_data)
-                    lang_status,lang = is_english(stt_data)
-                    print("LAMGUAGE:"+str(lang))
+                    lang_status,lang = is_supported_language(stt_data)
+                    #print("LANGUAGE:"+str(lang))
 
-                    if stt_data and lang_status:
+                    if stt_data and lang_status and len(stt_data)>=3:
                         stt_event = {'event':'stt','sequenceNumber': 2,'stt':{'callSid':call_id,'reason':'','language':lang},'streamSid':''}
                         await websocket.send(json.dumps(stt_event))
                         # LLM query
@@ -236,7 +236,7 @@ async def handle_voice_stream(websocket):
                             tts_event = {'event':'tts','sequenceNumber': 2,'tts':{'callSid':call_id,'reason':'','stt':False},'streamSid':''}
                             await websocket.send(json.dumps(tts_event))
                     else:
-                        tts_done = text_to_speech(TTS_VOICE,"I am not able to understand you, can you please repeat, I can understand English, Hindi and Gujarati languages.",call_id)
+                        tts_done = text_to_speech(TTS_VOICE,"kindly speak in detail so I can understand, can you please repeat, I can understand English, Hindi and Gujarati languages.",call_id)
                         if tts_done:
                             tts_event = {'event':'tts','sequenceNumber': 2,'tts':{'callSid':call_id,'reason':'','stt':True},'streamSid':''}
                             await websocket.send(json.dumps(tts_event))
