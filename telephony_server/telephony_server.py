@@ -59,7 +59,7 @@ async def listen_to_bot_message(websocket):
                 else:
                     # playback the bot response here
                     tts_file = "/tmp/"+call_id+"_tts_new"
-                    response = ari.play_prompt(call_id,tts_file)
+                    #response = ari.play_prompt(call_id,tts_file)
             elif event=='stt':
                 call_id = message['stt']['callSid']
                 language = message['stt']['language']
@@ -97,10 +97,11 @@ async def process_stream_data(key,rtp_payload):
             call_id = parsed_call_data['call_id']
             caller_number = parsed_call_data['caller_number']
             did_number = parsed_call_data['did_number']
+            external_media_port = parsed_call_data['external_media_port']
             base64_bytes = base64.b64encode(rtp_payload)
             base64_string = base64_bytes.decode('utf-8')
-            start_event = {'event':'start','sequenceNumber':1,'start':{'accountSid':'1234','streamSid':'','callSid':call_id,'from':caller_number,'to':did_number,'mediaFormat':{'encoding':'audio/x-mulaw','sampleRate': 8000,'bitRate': 64, 'bitDepth':8}},'streamSid':''}
-            media_event = {'event': 'media','sequenceNumber': 2,'media': {'chunk': 1,'timestamp': 208,'callSid':call_id,'payload': base64_string},'streamSid': 'vkslvs'}
+            start_event = {'event':'start','sequenceNumber':1,'start':{'accountSid':'1234','streamSid':'','callSid':call_id,'from':caller_number,'to':did_number,'external_media_port':external_media_port,'mediaFormat':{'encoding':'audio/x-mulaw','sampleRate': 8000,'bitRate': 64, 'bitDepth':8}},'streamSid':''}
+            media_event = {'event': 'media','sequenceNumber': 2,'media': {'chunk': 1,'timestamp': 208,'callSid':call_id,'payload': base64_string,'external_media_port':external_media_port},'streamSid': 'vkslvs'}
             stop_event = {'event':'stop','sequenceNumber': 2,'stop':{'callSid':call_id,'reason':'call_disconnected'},'streamSid':''}
             # if ws_bot_client:
             #     await ws_bot_client.send(json.dumps(media_event))
@@ -122,10 +123,11 @@ async def process_stream_data(key,rtp_payload):
             call_id = parsed_call_data['call_id']
             caller_number = parsed_call_data['caller_number']
             did_number = parsed_call_data['did_number']
+            external_media_port = parsed_call_data['external_media_port']
             base64_bytes = base64.b64encode(rtp_payload)
             base64_string = base64_bytes.decode('utf-8')
-            start_event = {'event':'start','sequenceNumber':1,'start':{'accountSid':'1234','streamSid':'','callSid':call_id,'from':caller_number,'to':did_number,'mediaFormat':{'encoding':'audio/x-mulaw','sampleRate': 8000,'bitRate': 64, 'bitDepth':8}},'streamSid':''}
-            media_event = {'event': 'media','sequenceNumber': 2,'media': {'chunk': 1,'timestamp': 208,'payload': base64_bytes},'streamSid': 'vkslvs'}
+            start_event = {'event':'start','sequenceNumber':1,'start':{'accountSid':'1234','streamSid':'','callSid':call_id,'from':caller_number,'to':did_number,'external_media_port':external_media_port,'mediaFormat':{'encoding':'audio/x-mulaw','sampleRate': 8000,'bitRate': 64, 'bitDepth':8}},'streamSid':''}
+            media_event = {'event': 'media','sequenceNumber': 2,'media': {'chunk': 1,'timestamp': 208,'payload': base64_bytes,'external_media_port':external_media_port},'streamSid': 'vkslvs'}
             stop_event = {'event':'stop','sequenceNumber': 2,'stop':{'callSid':call_id,'reason':'call_disconnected'},'streamSid':''}
 
             # connecting to Bot websocket server on call start
@@ -171,12 +173,13 @@ async def ari_events(user,password,app):
                     response = ari.create_external_media(cfg.APP,cfg.EXTERNAL_APP_SERVER+":"+str(cfg.RTP_PORT),cfg.CODEC)
                     external_media_channelid = response['id']
                     port = response['channelvars']['UNICASTRTP_LOCAL_PORT']
-                    print("CREATE:"+external_media_channelid)
-                    external_media_channels[incoming_sip_channel_id] = external_media_channelid
+                    print("CREATE:"+external_media_channelid+"--"+port)
+                    #external_media_channels[incoming_sip_channel_id] = external_media_channelid
+                    external_media_channels[incoming_sip_channel_id] = {"channel_id": external_media_channelid,"port": port}
 
                     # Setting callid and port mapping
                     r = redis.Redis(host='localhost', port=6379, db=0)
-                    call_data = {"call_id": incoming_sip_channel_id,"caller_number": caller_number,"did_number": did_number}
+                    call_data = {"call_id": incoming_sip_channel_id,"caller_number": caller_number,"did_number": did_number,"external_media_port":port}
                     r.hset("port:"+str(port), mapping=call_data)
                     
                     # create bridge and add SIP,ExternalMedia channels into the bridge
@@ -215,7 +218,9 @@ async def ari_events(user,password,app):
                 talk_end_channel_id = msg['channel']['id']
                 #ari.remove_channel_from_bridge(bridge_id,incoming_sip_channel_id)
                 #ari.play_music_on_hold(incoming_sip_channel_id,"default")
-                talk_end_event = {'event':'talk_end','talk_end':{'accountSid':'1234','streamSid':'','callSid':talk_end_channel_id,'from':'','to':''},'streamSid':''}
+                media_info = external_media_channels.get(talk_end_channel_id)
+                external_media_port = media_info["port"]
+                talk_end_event = {'event':'talk_end','talk_end':{'accountSid':'1234','streamSid':'','callSid':talk_end_channel_id,'from':'','to':'','external_media_port':external_media_port},'streamSid':''}
                 await ws_bot_client.send(json.dumps(talk_end_event))
                 #random_filler_prompt = random.choice(filler_prompts)
                 #time.sleep(2)
@@ -233,7 +238,8 @@ async def ari_events(user,password,app):
                     ari.delete_bridge(bridge_id)
                 if call_id in external_media_channels:
                     #print("END:"+str(external_media_channelid))
-                    external_media_channelid = external_media_channels.get(call_id)
+                    media_info = external_media_channels.get(call_id)
+                    external_media_channelid = media_info["channel_id"]
                     del external_media_channels[call_id]
                     ari.hangup_call(str(external_media_channelid))
                 # if call_id in external_media_channels:

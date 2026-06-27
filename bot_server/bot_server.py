@@ -1,4 +1,7 @@
 import asyncio
+import socket
+import struct
+import audioop
 import websockets
 import requests
 import json
@@ -28,6 +31,166 @@ LANGUAGE_SUPPORT = cfg.LANGUAGE_SUPPORT
 
 #create openai client on bot server start
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+def build_rtp_packet(payload, seq, timestamp, ssrc):
+    # RTP Header:
+    # V=2, P=0, X=0, CC=0 -> 0x80
+    # PT=0 (PCMU / ulaw)
+    header = struct.pack(
+        "!BBHII",
+        0x80,     # Version 2
+        0,        # Payload type (PCMU)
+        seq,
+        timestamp,
+        ssrc
+    )
+    return header + payload
+
+async def stream_ulaw_bytes(host, port, ulaw_bytes):
+    loop = asyncio.get_running_loop()
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setblocking(False)
+
+    seq = 0
+    timestamp = 0
+    ssrc = 0x12345678
+
+    for offset in range(0, len(ulaw_bytes), 160):
+        payload = ulaw_bytes[offset:offset + 160]
+
+        # Pad the last packet if needed
+        if len(payload) < 160:
+            payload += b"\xff" * (160 - len(payload))  # μ-law silence
+
+        rtp_header = struct.pack(
+            "!BBHII",
+            0x80,      # RTP Version 2
+            0,         # Payload Type 0 (PCMU)
+            seq,
+            timestamp,
+            ssrc,
+        )
+
+        await loop.sock_sendto(
+            sock,
+            rtp_header + payload,
+            (host, port),
+        )
+        print("STREAM TTS DIRECT TO EXTERNAL MEDIA PORT----")
+
+        seq = (seq + 1) & 0xFFFF
+        timestamp += 160
+
+        await asyncio.sleep(0.02)
+
+    sock.close()
+
+
+async def stream_ulaw(host, port, file_path):
+    print("Starting RTP stream...")
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setblocking(False)
+
+    loop = asyncio.get_running_loop()
+
+    seq = 0
+    timestamp = 0
+    ssrc = 0x12345678
+
+    frame_size = 160          # 20ms at 8kHz for G.711
+    interval = 0.02           # 20ms
+
+    # Open file
+    with open(file_path, "rb") as f:
+
+        # =========================================================
+        # 🔥 CRITICAL: Send early RTP packets immediately (WARM-UP)
+        # =========================================================
+        silence = b"\xff" * frame_size
+
+        print("Sending initial RTP warm-up packets...")
+        for _ in range(5):
+            pkt = build_rtp_packet(silence, seq, timestamp, ssrc)
+            await loop.sock_sendto(sock, pkt, (host, port))
+
+            seq += 1
+            timestamp += frame_size
+            await asyncio.sleep(interval)
+
+        print("Starting actual audio stream...")
+
+        next_time = loop.time()
+
+        # =========================================================
+        # Main streaming loop
+        # =========================================================
+        while True:
+            payload = f.read(frame_size)
+
+            if not payload:
+                break
+
+            # pad if needed (last frame safety)
+            if len(payload) < frame_size:
+                payload += b"\xff" * (frame_size - len(payload))
+
+            pkt = build_rtp_packet(payload, seq, timestamp, ssrc)
+
+            await loop.sock_sendto(sock, pkt, (host, port))
+
+            seq = (seq + 1) & 0xFFFF
+            timestamp += frame_size
+
+            # stable 20ms pacing (prevents drift)
+            next_time += interval
+            await asyncio.sleep(max(0, next_time - loop.time()))
+
+    sock.close()
+    print("RTP stream finished.")
+
+async def stream_ulaw_old(host, port):
+    print("INSIDE STREAM FLOW---")
+    loop = asyncio.get_running_loop()
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setblocking(False)
+
+    seq = 0
+    timestamp = 0
+    ssrc = 0x12345678
+
+    with open("/var/lib/asterisk/sounds/num-was-successfully.ulaw", "rb") as f:
+        print("INSIDE FILE OPEN ULAW---")
+        while True:
+            payload = f.read(160)  # 20ms of G.711 μ-law
+
+            if not payload:
+                break
+
+            rtp_header = struct.pack(
+                "!BBHII",
+                0x80,      # RTP Version 2
+                0,         # Payload Type 0 (PCMU)
+                seq,
+                timestamp,
+                ssrc,
+            )
+
+            await loop.sock_sendto(
+                sock,
+                rtp_header + payload,
+                (host, port),
+            )
+            print("SENT ULAW RTP---")
+
+            seq = (seq + 1) & 0xFFFF
+            timestamp += 160
+
+            await asyncio.sleep(0.02)  # 20 ms
+
+    sock.close()
 
 #detects language in stt data - allows to control enable/disable language support
 def is_supported_language(text):
@@ -100,7 +263,7 @@ def speech_to_text_old(api_key,input_file,output_file,tts_file,tts_file_new):
     return stt_data
 
 #performs tts operation
-def text_to_speech(voice,text_data,file_name):
+def text_to_speech(voice,text_data,file_name,external_media_port):
     #client = OpenAI(api_key=api_key)
     #print("New TTS Calling")
     try:
@@ -110,6 +273,11 @@ def text_to_speech(voice,text_data,file_name):
             with open(input_file, "wb") as f:
                 for chunk in response.iter_bytes(chunk_size=4096):
                     f.write(chunk)
+                    #asyncio.create_task(stream_ulaw("127.0.0.1", external_media_port))
+                    # pcm_8k = audioop.ratecv(chunk, 2, 1, 24000, 8000, None)[0]
+                    #ulaw_bytes = audioop.lin2ulaw(chunk, 2)  # sample width = 2 bytes
+                    #print("ULAW BYTES---"+ulaw_bytes)
+                    #asyncio.create_task(stream_ulaw_bytes("127.0.0.1", external_media_port, ulaw_bytes))
             
         if os.path.exists(input_file):
             command = ["ffmpeg","-f", "s16le","-ar", "24000","-ac", "1","-i", input_file,"-ar", "8000","-ac", "1","-f", "s16le",output_file] #["ffmpeg","-i", input_file,"-ar", "8000",output_file]
@@ -157,7 +325,7 @@ def text_to_speech_old(api_key,voice,text_data,file_name):
 #performs intelligence lookup for reply
 def llm_query(LLM_SERVER,LLM_PORT,stt_data):
     url = "http://"+LLM_SERVER+":"+LLM_PORT+"/agentic_ai/bus_booking"
-    payload = json.dumps({"thread_id": "call123abc","query": stt_data,"model": "openai"})
+    payload = json.dumps({"thread_id": "call123abc","user_id":"test123","query": stt_data,"model": "openai"})
     headers = {'Content-Type': 'application/json'}
     response = requests.request("POST", url, headers=headers, data=payload)
     data = json.loads(response.text)
@@ -193,6 +361,10 @@ async def handle_voice_stream(websocket):
             elif event=='talk_end':
                 #print(message)
                 call_id = message['talk_end']['callSid']
+                external_media_port = int(message['talk_end']['external_media_port'])
+                print("EXTERNAL MEDIA PORT:"+str(external_media_port))
+                asyncio.create_task(stream_ulaw(host="127.0.0.1",port=external_media_port,file_path="/var/lib/asterisk/sounds/num-was-successfully.ulaw"))
+                continue
                 input_file = '/tmp/'+call_id+'.raw'
                 output_file = '/tmp/'+call_id+'.wav'
                 # tts_file = '/tmp/'+call_id+'_tts.wav'
@@ -226,7 +398,7 @@ async def handle_voice_stream(websocket):
                         print("LLM Answer: "+tts_data)
 
                         #TTS
-                        tts_done = text_to_speech(TTS_VOICE,tts_data,call_id)
+                        tts_done = text_to_speech(TTS_VOICE,tts_data,call_id,external_media_port)
                         now = datetime.now()
                         #print("TTS END:", now.strftime("%H:%M:%S"))
                         if tts_done:
@@ -236,7 +408,7 @@ async def handle_voice_stream(websocket):
                             tts_event = {'event':'tts','sequenceNumber': 2,'tts':{'callSid':call_id,'reason':'','stt':False},'streamSid':''}
                             await websocket.send(json.dumps(tts_event))
                     else:
-                        tts_done = text_to_speech(TTS_VOICE,"kindly speak in detail so I can understand, can you please repeat, I can understand English, Hindi and Gujarati languages.",call_id)
+                        tts_done = text_to_speech(TTS_VOICE,"kindly speak in detail so I can understand, can you please repeat, I can understand English, Hindi and Gujarati languages.",call_id,external_media_port)
                         if tts_done:
                             tts_event = {'event':'tts','sequenceNumber': 2,'tts':{'callSid':call_id,'reason':'','stt':True},'streamSid':''}
                             await websocket.send(json.dumps(tts_event))
