@@ -9,6 +9,7 @@ from datetime import datetime
 import base64
 import os
 import time
+import random
 import subprocess
 import langid
 #import threading
@@ -31,166 +32,91 @@ LANGUAGE_SUPPORT = cfg.LANGUAGE_SUPPORT
 
 #create openai client on bot server start
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-def build_rtp_packet(payload, seq, timestamp, ssrc):
-    # RTP Header:
-    # V=2, P=0, X=0, CC=0 -> 0x80
-    # PT=0 (PCMU / ulaw)
-    header = struct.pack(
-        "!BBHII",
-        0x80,     # Version 2
-        0,        # Payload type (PCMU)
-        seq,
-        timestamp,
-        ssrc
-    )
-    return header + payload
-
-async def stream_ulaw_bytes(host, port, ulaw_bytes):
-    loop = asyncio.get_running_loop()
-
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setblocking(False)
-
-    seq = 0
-    timestamp = 0
-    ssrc = 0x12345678
-
-    for offset in range(0, len(ulaw_bytes), 160):
-        payload = ulaw_bytes[offset:offset + 160]
-
-        # Pad the last packet if needed
-        if len(payload) < 160:
-            payload += b"\xff" * (160 - len(payload))  # μ-law silence
-
-        rtp_header = struct.pack(
-            "!BBHII",
-            0x80,      # RTP Version 2
-            0,         # Payload Type 0 (PCMU)
-            seq,
-            timestamp,
-            ssrc,
-        )
-
-        await loop.sock_sendto(
-            sock,
-            rtp_header + payload,
-            (host, port),
-        )
-        print("STREAM TTS DIRECT TO EXTERNAL MEDIA PORT----")
-
-        seq = (seq + 1) & 0xFFFF
-        timestamp += 160
-
-        await asyncio.sleep(0.02)
-
-    sock.close()
-
-
-async def stream_ulaw(host, port, file_path):
-    print("Starting RTP stream...")
-
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setblocking(False)
-
-    loop = asyncio.get_running_loop()
-
-    seq = 0
-    timestamp = 0
-    ssrc = 0x12345678
-
-    frame_size = 160          # 20ms at 8kHz for G.711
-    interval = 0.02           # 20ms
-
-    # Open file
+def stream_ulaw_audio(sock,file_path, target_ip, target_port):
+    # 1. Setup UDP Socket
+    #sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    
+    # 2. Initialize RTP Variables
+    version = 2
+    padding = 0
+    extension = 0
+    csrc_count = 0
+    
+    # Pack the first byte (Version, P, X, CC)
+    # Binary: 10 0 0 0000 = 0x80
+    byte0 = (version << 6) | (padding << 5) | (extension << 4) | csrc_count
+    
+    # Payload Type: 0 is the standard ID for PCMU (G.711 u-law)
+    payload_type = 0 
+    marker = 0
+    byte1 = (marker << 7) | payload_type
+    
+    # Randomize initial sequence, timestamp, and SSRC
+    # sequence_number = random.randint(1000, 50000)
+    # timestamp = random.randint(100000, 5000000)
+    # ssrc = random.randint(100000, 999999)
+    sequence_number = random.randint(0, 65535)
+    timestamp = random.randint(0, 0xFFFFFFFF)
+    ssrc = random.randint(1, 0xFFFFFFFF)
+    
+    # 3. Define Packet Timing and Size
+    # For 8000Hz u-law, 20ms of audio is exactly 160 bytes (8000 * 0.02)
+    CHUNK_SIZE = 160 
+    FRAME_DURATION = 0.020 # 20 milliseconds
+    
+    print(f"Streaming {file_path} to {target_ip}:{target_port}...")
+    
     with open(file_path, "rb") as f:
-
-        # =========================================================
-        # 🔥 CRITICAL: Send early RTP packets immediately (WARM-UP)
-        # =========================================================
-        silence = b"\xff" * frame_size
-
-        print("Sending initial RTP warm-up packets...")
-        for _ in range(5):
-            pkt = build_rtp_packet(silence, seq, timestamp, ssrc)
-            await loop.sock_sendto(sock, pkt, (host, port))
-
-            seq += 1
-            timestamp += frame_size
-            await asyncio.sleep(interval)
-
-        print("Starting actual audio stream...")
-
-        next_time = loop.time()
-
-        # =========================================================
-        # Main streaming loop
-        # =========================================================
+        start_time = time.time()
+        packet_count = 0
+        
         while True:
-            payload = f.read(frame_size)
-
+            # Read a 20ms chunk of raw u-law audio
+            payload = f.read(CHUNK_SIZE)
             if not payload:
-                break
-
-            # pad if needed (last frame safety)
-            if len(payload) < frame_size:
-                payload += b"\xff" * (frame_size - len(payload))
-
-            pkt = build_rtp_packet(payload, seq, timestamp, ssrc)
-
-            await loop.sock_sendto(sock, pkt, (host, port))
-
-            seq = (seq + 1) & 0xFFFF
-            timestamp += frame_size
-
-            # stable 20ms pacing (prevents drift)
-            next_time += interval
-            await asyncio.sleep(max(0, next_time - loop.time()))
-
-    sock.close()
-    print("RTP stream finished.")
-
-async def stream_ulaw_old(host, port):
-    print("INSIDE STREAM FLOW---")
-    loop = asyncio.get_running_loop()
-
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setblocking(False)
-
-    seq = 0
-    timestamp = 0
-    ssrc = 0x12345678
-
-    with open("/var/lib/asterisk/sounds/num-was-successfully.ulaw", "rb") as f:
-        print("INSIDE FILE OPEN ULAW---")
-        while True:
-            payload = f.read(160)  # 20ms of G.711 μ-law
-
-            if not payload:
-                break
-
+                break # End of file
+                
+            # Handle short final packets by padding with silent u-law bytes (0xFF)
+            if len(payload) < CHUNK_SIZE:
+                payload += b'\xff' * (CHUNK_SIZE - len(payload))
+            
+            # 4. Build the 12-Byte Big-Endian Header
+            # Format string explanation:
+            # ! = Big-Endian
+            # B = 1 byte unsigned char
+            # H = 2 byte unsigned short (Sequence Number)
+            # I = 4 byte unsigned int (Timestamp)
+            # I = 4 byte unsigned int (SSRC)
             rtp_header = struct.pack(
-                "!BBHII",
-                0x80,      # RTP Version 2
-                0,         # Payload Type 0 (PCMU)
-                seq,
-                timestamp,
-                ssrc,
+                "!BBHII", 
+                byte0, 
+                byte1, 
+                sequence_number, 
+                timestamp, 
+                ssrc
             )
+            
+            # Combine Header and Audio Payload
+            rtp_packet = rtp_header + payload
+            
+            # 5. Transmit to Asterisk Port
+            sock.sendto(rtp_packet, (target_ip, target_port))
+            
+            # 6. Increment Variables for Next Packet
+            sequence_number = (sequence_number + 1) & 0xFFFF # Keep within 16-bit bounds
+            timestamp += CHUNK_SIZE # Advance timestamp by number of samples sent
+            packet_count += 1
+            
+            # 7. Strict Timing Loop to maintain 20ms pacing
+            next_transmission = start_time + (packet_count * FRAME_DURATION)
+            sleep_time = next_transmission - time.time()
+            if sleep_time > 0:
+                time.sleep(sleep_time)
 
-            await loop.sock_sendto(
-                sock,
-                rtp_header + payload,
-                (host, port),
-            )
-            print("SENT ULAW RTP---")
-
-            seq = (seq + 1) & 0xFFFF
-            timestamp += 160
-
-            await asyncio.sleep(0.02)  # 20 ms
-
-    sock.close()
+    #sock.close()
+    print("Streaming completed successfully.")
 
 #detects language in stt data - allows to control enable/disable language support
 def is_supported_language(text):
@@ -363,7 +289,24 @@ async def handle_voice_stream(websocket):
                 call_id = message['talk_end']['callSid']
                 external_media_port = int(message['talk_end']['external_media_port'])
                 print("EXTERNAL MEDIA PORT:"+str(external_media_port))
-                asyncio.create_task(stream_ulaw(host="127.0.0.1",port=external_media_port,file_path="/var/lib/asterisk/sounds/num-was-successfully.ulaw"))
+                #asyncio.create_task(stream_ulaw(host="127.0.0.1",port=external_media_port,file_path="/var/lib/asterisk/sounds/num-was-successfully.ulaw"))
+                #sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+                # sequence = random.randint(0, 65535)
+                # timestamp = random.randint(0, 0xFFFFFFFF)
+                # ssrc = random.randint(1, 0xFFFFFFFF)
+                stream_ulaw_audio(sock,"/var/lib/asterisk/sounds/num-was-successfully.ulaw", "127.0.0.1", external_media_port)
+                # print("FIRST:"+str(sequence))
+                # print("FIRST:"+str(timestamp))
+                # sequence = (sequence + 1) & 0xFFFF # Keep within 16-bit bounds
+                # timestamp += 160 # Advance timestamp by number of samples sent
+                # print("SECOND:"+str(sequence))
+                # print("FIRST:"+str(timestamp))
+
+                stream_ulaw_audio(sock,"/var/lib/asterisk/sounds/num-was-successfully.ulaw", "127.0.0.1", external_media_port)
+                # sequence = (sequence + 1) & 0xFFFF # Keep within 16-bit bounds
+                # timestamp += 160 # Advance timestamp by number of samples sent
+                stream_ulaw_audio(sock,"/var/lib/asterisk/sounds/num-was-successfully.ulaw", "127.0.0.1", external_media_port)
                 continue
                 input_file = '/tmp/'+call_id+'.raw'
                 output_file = '/tmp/'+call_id+'.wav'
