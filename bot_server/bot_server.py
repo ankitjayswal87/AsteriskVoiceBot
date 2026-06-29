@@ -34,6 +34,8 @@ LANGUAGE_SUPPORT = cfg.LANGUAGE_SUPPORT
 #create openai client on bot server start
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+current_dir = os.getcwd()
+prompt_path = os.path.join(current_dir, "..", "prompts/")
 
 #detects language in stt data - allows to control enable/disable language support
 def is_supported_language(text):
@@ -100,7 +102,7 @@ def text_to_speech(voice,text_data,external_media_port):
                 streamer.send_ulaw(ulaw)
     except Exception as e:
         print("tts not done")
-        streamer.stream_ulaw_audio("/var/lib/asterisk/sounds/num-was-successfully.ulaw")
+        streamer.stream_ulaw_audio(prompt_path+'not_able.ulaw')
 
 #performs intelligence lookup for reply
 def llm_query(LLM_SERVER,LLM_PORT,stt_data):
