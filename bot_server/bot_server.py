@@ -19,6 +19,7 @@ from openai import OpenAI
 #from pydub import AudioSegment
 #import io
 import config as cfg
+import library
 
 #read config parameters
 HOST = cfg.BOT_SERVER
@@ -33,90 +34,6 @@ LANGUAGE_SUPPORT = cfg.LANGUAGE_SUPPORT
 #create openai client on bot server start
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-def stream_ulaw_audio(sock,file_path, target_ip, target_port):
-    # 1. Setup UDP Socket
-    #sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    
-    # 2. Initialize RTP Variables
-    version = 2
-    padding = 0
-    extension = 0
-    csrc_count = 0
-    
-    # Pack the first byte (Version, P, X, CC)
-    # Binary: 10 0 0 0000 = 0x80
-    byte0 = (version << 6) | (padding << 5) | (extension << 4) | csrc_count
-    
-    # Payload Type: 0 is the standard ID for PCMU (G.711 u-law)
-    payload_type = 0 
-    marker = 0
-    byte1 = (marker << 7) | payload_type
-    
-    # Randomize initial sequence, timestamp, and SSRC
-    # sequence_number = random.randint(1000, 50000)
-    # timestamp = random.randint(100000, 5000000)
-    # ssrc = random.randint(100000, 999999)
-    sequence_number = random.randint(0, 65535)
-    timestamp = random.randint(0, 0xFFFFFFFF)
-    ssrc = random.randint(1, 0xFFFFFFFF)
-    
-    # 3. Define Packet Timing and Size
-    # For 8000Hz u-law, 20ms of audio is exactly 160 bytes (8000 * 0.02)
-    CHUNK_SIZE = 160 
-    FRAME_DURATION = 0.020 # 20 milliseconds
-    
-    print(f"Streaming {file_path} to {target_ip}:{target_port}...")
-    
-    with open(file_path, "rb") as f:
-        start_time = time.time()
-        packet_count = 0
-        
-        while True:
-            # Read a 20ms chunk of raw u-law audio
-            payload = f.read(CHUNK_SIZE)
-            if not payload:
-                break # End of file
-                
-            # Handle short final packets by padding with silent u-law bytes (0xFF)
-            if len(payload) < CHUNK_SIZE:
-                payload += b'\xff' * (CHUNK_SIZE - len(payload))
-            
-            # 4. Build the 12-Byte Big-Endian Header
-            # Format string explanation:
-            # ! = Big-Endian
-            # B = 1 byte unsigned char
-            # H = 2 byte unsigned short (Sequence Number)
-            # I = 4 byte unsigned int (Timestamp)
-            # I = 4 byte unsigned int (SSRC)
-            rtp_header = struct.pack(
-                "!BBHII", 
-                byte0, 
-                byte1, 
-                sequence_number, 
-                timestamp, 
-                ssrc
-            )
-            
-            # Combine Header and Audio Payload
-            rtp_packet = rtp_header + payload
-            
-            # 5. Transmit to Asterisk Port
-            sock.sendto(rtp_packet, (target_ip, target_port))
-            
-            # 6. Increment Variables for Next Packet
-            sequence_number = (sequence_number + 1) & 0xFFFF # Keep within 16-bit bounds
-            timestamp += CHUNK_SIZE # Advance timestamp by number of samples sent
-            packet_count += 1
-            
-            # 7. Strict Timing Loop to maintain 20ms pacing
-            next_transmission = start_time + (packet_count * FRAME_DURATION)
-            sleep_time = next_transmission - time.time()
-            if sleep_time > 0:
-                time.sleep(sleep_time)
-
-    #sock.close()
-    print("Streaming completed successfully.")
 
 #detects language in stt data - allows to control enable/disable language support
 def is_supported_language(text):
@@ -195,15 +112,17 @@ def text_to_speech(voice,text_data,file_name,external_media_port):
     try:
         input_file = "/tmp/"+file_name+"_tts.pcm"
         output_file = "/tmp/"+file_name+"_tts_new.raw"
+        state = None
+        sampler = library.Sampler(24000,8000)
+        streamer = library.RTPStreamer(sock, "127.0.0.1", external_media_port)
+        
         with client.audio.speech.with_streaming_response.create(model=TTS_MODEL,voice=voice,input=text_data,response_format="pcm") as response:
             with open(input_file, "wb") as f:
-                for chunk in response.iter_bytes(chunk_size=4096):
+                for chunk in response.iter_bytes(chunk_size=960):
                     f.write(chunk)
-                    #asyncio.create_task(stream_ulaw("127.0.0.1", external_media_port))
-                    # pcm_8k = audioop.ratecv(chunk, 2, 1, 24000, 8000, None)[0]
-                    #ulaw_bytes = audioop.lin2ulaw(chunk, 2)  # sample width = 2 bytes
-                    #print("ULAW BYTES---"+ulaw_bytes)
-                    #asyncio.create_task(stream_ulaw_bytes("127.0.0.1", external_media_port, ulaw_bytes))
+                    ulaw, state = sampler.pcm24k_to_ulaw(chunk, state)
+                    streamer.send_ulaw(ulaw)
+
             
         if os.path.exists(input_file):
             command = ["ffmpeg","-f", "s16le","-ar", "24000","-ac", "1","-i", input_file,"-ar", "8000","-ac", "1","-f", "s16le",output_file] #["ffmpeg","-i", input_file,"-ar", "8000",output_file]
@@ -289,25 +208,11 @@ async def handle_voice_stream(websocket):
                 call_id = message['talk_end']['callSid']
                 external_media_port = int(message['talk_end']['external_media_port'])
                 print("EXTERNAL MEDIA PORT:"+str(external_media_port))
-                #asyncio.create_task(stream_ulaw(host="127.0.0.1",port=external_media_port,file_path="/var/lib/asterisk/sounds/num-was-successfully.ulaw"))
-                #sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-                # sequence = random.randint(0, 65535)
-                # timestamp = random.randint(0, 0xFFFFFFFF)
-                # ssrc = random.randint(1, 0xFFFFFFFF)
-                stream_ulaw_audio(sock,"/var/lib/asterisk/sounds/num-was-successfully.ulaw", "127.0.0.1", external_media_port)
-                # print("FIRST:"+str(sequence))
-                # print("FIRST:"+str(timestamp))
-                # sequence = (sequence + 1) & 0xFFFF # Keep within 16-bit bounds
-                # timestamp += 160 # Advance timestamp by number of samples sent
-                # print("SECOND:"+str(sequence))
-                # print("FIRST:"+str(timestamp))
-
-                stream_ulaw_audio(sock,"/var/lib/asterisk/sounds/num-was-successfully.ulaw", "127.0.0.1", external_media_port)
-                # sequence = (sequence + 1) & 0xFFFF # Keep within 16-bit bounds
-                # timestamp += 160 # Advance timestamp by number of samples sent
-                stream_ulaw_audio(sock,"/var/lib/asterisk/sounds/num-was-successfully.ulaw", "127.0.0.1", external_media_port)
-                continue
+                
+                # stream_ulaw_audio(sock,"/var/lib/asterisk/sounds/num-was-successfully.ulaw", "127.0.0.1", external_media_port)
+                # stream_ulaw_audio(sock,"/var/lib/asterisk/sounds/num-was-successfully.ulaw", "127.0.0.1", external_media_port)
+                # stream_ulaw_audio(sock,"/var/lib/asterisk/sounds/num-was-successfully.ulaw", "127.0.0.1", external_media_port)
+                # continue
                 input_file = '/tmp/'+call_id+'.raw'
                 output_file = '/tmp/'+call_id+'.wav'
                 # tts_file = '/tmp/'+call_id+'_tts.wav'
