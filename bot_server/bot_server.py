@@ -54,7 +54,7 @@ def raw_to_wav_stt(input_file,output_file):
         print("Error during conversion:", e)
 
 #performs stt operation
-def speech_to_text(input_file, output_file, tts_file, tts_file_new):
+def speech_to_text(input_file, output_file):
     stt_data = None
     try:
         # Initialize OpenAI client
@@ -77,7 +77,7 @@ def speech_to_text(input_file, output_file, tts_file, tts_file_new):
 
     finally:
         # Cleanup files safely
-        for f in [input_file, output_file, tts_file, tts_file_new]:
+        for f in [input_file, output_file]:
             try:
                 if os.path.exists(f):
                     os.remove(f)
@@ -87,85 +87,20 @@ def speech_to_text(input_file, output_file, tts_file, tts_file_new):
 
     return stt_data
 
-def speech_to_text_old(api_key,input_file,output_file,tts_file,tts_file_new):
-    # STT for the user input
-    client = OpenAI(api_key=api_key)
-    with open(output_file, "rb") as audio_file:
-        transcription = client.audio.transcriptions.create(model=STT_MODEL,file=audio_file)
-
-    stt_data = transcription.text
-    #print(stt_data)
-    if os.path.exists(output_file):
-        #print('delete file')
-        os.remove(input_file)
-        os.remove(output_file)
-    if os.path.exists(tts_file):
-        #print('delete tts file')
-        os.remove(tts_file)
-        os.remove(tts_file_new)
-    return stt_data
-
 #performs tts operation
-def text_to_speech(voice,text_data,file_name,external_media_port):
-    #client = OpenAI(api_key=api_key)
-    #print("New TTS Calling")
+def text_to_speech(voice,text_data,external_media_port):
     try:
-        input_file = "/tmp/"+file_name+"_tts.pcm"
-        output_file = "/tmp/"+file_name+"_tts_new.raw"
         state = None
         sampler = library.Sampler(24000,8000)
         streamer = library.RTPStreamer(sock, "127.0.0.1", external_media_port)
         
         with client.audio.speech.with_streaming_response.create(model=TTS_MODEL,voice=voice,input=text_data,response_format="pcm") as response:
-            with open(input_file, "wb") as f:
-                for chunk in response.iter_bytes(chunk_size=960):
-                    f.write(chunk)
-                    ulaw, state = sampler.pcm24k_to_ulaw(chunk, state)
-                    streamer.send_ulaw(ulaw)
-
-            
-        if os.path.exists(input_file):
-            command = ["ffmpeg","-f", "s16le","-ar", "24000","-ac", "1","-i", input_file,"-ar", "8000","-ac", "1","-f", "s16le",output_file] #["ffmpeg","-i", input_file,"-ar", "8000",output_file]
-            try:
-                subprocess.run(command, stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=True)
-                #print("text to speech done")
-                return True
-            except subprocess.CalledProcessError as e:
-                print("Error during conversion:", e)
-                return False
-        else:
-            print("tts file not exists")
-            return False
+            for chunk in response.iter_bytes(chunk_size=960):
+                ulaw, state = sampler.pcm24k_to_ulaw(chunk, state)
+                streamer.send_ulaw(ulaw)
     except Exception as e:
         print("tts not done")
-        return False
-
-def text_to_speech_old(api_key,voice,text_data,file_name):
-    client = OpenAI(api_key=api_key)
-
-    try:
-        input_file = "/tmp/"+file_name+"_tts.wav"
-        output_file = "/tmp/"+file_name+"_tts_new.wav"
-        response = client.audio.speech.create(model="tts-1",voice=voice,input=text_data)
-        mp3_audio = io.BytesIO(response.content)
-        audio = AudioSegment.from_file(mp3_audio, format="mp3")
-        audio.export(input_file, format="wav")
-        
-        if os.path.exists(input_file):
-            command = ["ffmpeg","-i", input_file,"-ar", "8000",output_file]
-            try:
-                subprocess.run(command, stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=True)
-                #print("text to speech done")
-                return True
-            except subprocess.CalledProcessError as e:
-                print("Error during conversion:", e)
-                return False
-        else:
-            print("tts file not exists")
-            return False
-    except Exception as e:
-        print("tts not done")
-        return False
+        streamer.stream_ulaw_audio("/var/lib/asterisk/sounds/num-was-successfully.ulaw")
 
 #performs intelligence lookup for reply
 def llm_query(LLM_SERVER,LLM_PORT,stt_data):
@@ -204,7 +139,6 @@ async def handle_voice_stream(websocket):
                 with open("/tmp/"+call_id+".raw", "ab") as f:
                     f.write(decoded_audio)
             elif event=='talk_end':
-                #print(message)
                 call_id = message['talk_end']['callSid']
                 external_media_port = int(message['talk_end']['external_media_port'])
                 print("EXTERNAL MEDIA PORT:"+str(external_media_port))
@@ -215,21 +149,13 @@ async def handle_voice_stream(websocket):
                 # continue
                 input_file = '/tmp/'+call_id+'.raw'
                 output_file = '/tmp/'+call_id+'.wav'
-                # tts_file = '/tmp/'+call_id+'_tts.wav'
-                # tts_file_new = '/tmp/'+call_id+'_tts_new.wav'
-                tts_file = '/tmp/'+call_id+'_tts.pcm'
-                tts_file_new = '/tmp/'+call_id+'_tts_new.raw'
 
                 # raw to wav file conversion
                 if os.path.exists(input_file):
                     raw_to_wav_stt(input_file,output_file)
 
                     # STT
-                    now = datetime.now()
-                    #print("STT Start:", now.strftime("%H:%M:%S"))
-                    stt_data = speech_to_text(input_file,output_file,tts_file,tts_file_new)
-                    now = datetime.now()
-                    #print("STT END:", now.strftime("%H:%M:%S"))
+                    stt_data = speech_to_text(input_file,output_file)
                     print("STT Data: "+stt_data)
                     lang_status,lang = is_supported_language(stt_data)
                     #print("LANGUAGE:"+str(lang))
@@ -238,31 +164,13 @@ async def handle_voice_stream(websocket):
                         stt_event = {'event':'stt','sequenceNumber': 2,'stt':{'callSid':call_id,'reason':'','language':lang},'streamSid':''}
                         await websocket.send(json.dumps(stt_event))
                         # LLM query
-                        now = datetime.now()
-                        #print("LLM Start:", now.strftime("%H:%M:%S"))
-                        tts_data = llm_query(LLM_SERVER,LLM_PORT,stt_data)
-                        now = datetime.now()
-                        #print("LLM END:", now.strftime("%H:%M:%S"))
-                        print("LLM Answer: "+tts_data)
+                        llm_response = llm_query(LLM_SERVER,LLM_PORT,stt_data)
+                        print("LLM Answer: "+llm_response)
 
                         #TTS
-                        tts_done = text_to_speech(TTS_VOICE,tts_data,call_id,external_media_port)
-                        now = datetime.now()
-                        #print("TTS END:", now.strftime("%H:%M:%S"))
-                        if tts_done:
-                            tts_event = {'event':'tts','sequenceNumber': 2,'tts':{'callSid':call_id,'reason':'','stt':True},'streamSid':''}
-                            await websocket.send(json.dumps(tts_event))
-                        else:
-                            tts_event = {'event':'tts','sequenceNumber': 2,'tts':{'callSid':call_id,'reason':'','stt':False},'streamSid':''}
-                            await websocket.send(json.dumps(tts_event))
+                        text_to_speech(TTS_VOICE,llm_response,external_media_port)
                     else:
-                        tts_done = text_to_speech(TTS_VOICE,"kindly speak in detail so I can understand, can you please repeat, I can understand English, Hindi and Gujarati languages.",call_id,external_media_port)
-                        if tts_done:
-                            tts_event = {'event':'tts','sequenceNumber': 2,'tts':{'callSid':call_id,'reason':'','stt':True},'streamSid':''}
-                            await websocket.send(json.dumps(tts_event))
-                        else:
-                            tts_event = {'event':'tts','sequenceNumber': 2,'tts':{'callSid':call_id,'reason':'','stt':False},'streamSid':''}
-                            await websocket.send(json.dumps(tts_event))
+                        text_to_speech(TTS_VOICE,"kindly speak in detail so I can understand, can you please repeat, I can understand English, Hindi and Gujarati languages.",external_media_port)
 
             elif event=='stop':
                 call_id = message['stop']['callSid']

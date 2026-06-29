@@ -121,89 +121,89 @@ class RTPStreamer:
 
     #     print("Streaming completed successfully.")
 
-    # def stream_ulaw_audio(sock,file_path, target_ip, target_port):
-    #     # 1. Setup UDP Socket
-    #     #sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    def stream_ulaw_audio(self,file_path):
+        # 1. Setup UDP Socket
+        #sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         
-    #     # 2. Initialize RTP Variables
-    #     version = 2
-    #     padding = 0
-    #     extension = 0
-    #     csrc_count = 0
+        # 2. Initialize RTP Variables
+        version = 2
+        padding = 0
+        extension = 0
+        csrc_count = 0
         
-    #     # Pack the first byte (Version, P, X, CC)
-    #     # Binary: 10 0 0 0000 = 0x80
-    #     byte0 = (version << 6) | (padding << 5) | (extension << 4) | csrc_count
+        # Pack the first byte (Version, P, X, CC)
+        # Binary: 10 0 0 0000 = 0x80
+        byte0 = (version << 6) | (padding << 5) | (extension << 4) | csrc_count
         
-    #     # Payload Type: 0 is the standard ID for PCMU (G.711 u-law)
-    #     payload_type = 0 
-    #     marker = 0
-    #     byte1 = (marker << 7) | payload_type
+        # Payload Type: 0 is the standard ID for PCMU (G.711 u-law)
+        payload_type = 0 
+        marker = 0
+        byte1 = (marker << 7) | payload_type
         
-    #     # Randomize initial sequence, timestamp, and SSRC
-    #     # sequence_number = random.randint(1000, 50000)
-    #     # timestamp = random.randint(100000, 5000000)
-    #     # ssrc = random.randint(100000, 999999)
-    #     sequence_number = random.randint(0, 65535)
-    #     timestamp = random.randint(0, 0xFFFFFFFF)
-    #     ssrc = random.randint(1, 0xFFFFFFFF)
+        # Randomize initial sequence, timestamp, and SSRC
+        # sequence_number = random.randint(1000, 50000)
+        # timestamp = random.randint(100000, 5000000)
+        # ssrc = random.randint(100000, 999999)
+        sequence_number = random.randint(0, 65535)
+        timestamp = random.randint(0, 0xFFFFFFFF)
+        ssrc = random.randint(1, 0xFFFFFFFF)
         
-    #     # 3. Define Packet Timing and Size
-    #     # For 8000Hz u-law, 20ms of audio is exactly 160 bytes (8000 * 0.02)
-    #     CHUNK_SIZE = 160 
-    #     FRAME_DURATION = 0.020 # 20 milliseconds
+        # 3. Define Packet Timing and Size
+        # For 8000Hz u-law, 20ms of audio is exactly 160 bytes (8000 * 0.02)
+        CHUNK_SIZE = 160 
+        FRAME_DURATION = 0.020 # 20 milliseconds
         
-    #     print(f"Streaming {file_path} to {target_ip}:{target_port}...")
+        print(f"Streaming {file_path} to {self.ip}:{self.port}...")
         
-    #     with open(file_path, "rb") as f:
-    #         start_time = time.time()
-    #         packet_count = 0
+        with open(file_path, "rb") as f:
+            start_time = time.time()
+            packet_count = 0
             
-    #         while True:
-    #             # Read a 20ms chunk of raw u-law audio
-    #             payload = f.read(CHUNK_SIZE)
-    #             if not payload:
-    #                 break # End of file
+            while True:
+                # Read a 20ms chunk of raw u-law audio
+                payload = f.read(CHUNK_SIZE)
+                if not payload:
+                    break # End of file
                     
-    #             # Handle short final packets by padding with silent u-law bytes (0xFF)
-    #             if len(payload) < CHUNK_SIZE:
-    #                 payload += b'\xff' * (CHUNK_SIZE - len(payload))
+                # Handle short final packets by padding with silent u-law bytes (0xFF)
+                if len(payload) < CHUNK_SIZE:
+                    payload += b'\xff' * (CHUNK_SIZE - len(payload))
                 
-    #             # 4. Build the 12-Byte Big-Endian Header
-    #             # Format string explanation:
-    #             # ! = Big-Endian
-    #             # B = 1 byte unsigned char
-    #             # H = 2 byte unsigned short (Sequence Number)
-    #             # I = 4 byte unsigned int (Timestamp)
-    #             # I = 4 byte unsigned int (SSRC)
-    #             rtp_header = struct.pack(
-    #                 "!BBHII", 
-    #                 byte0, 
-    #                 byte1, 
-    #                 sequence_number, 
-    #                 timestamp, 
-    #                 ssrc
-    #             )
+                # 4. Build the 12-Byte Big-Endian Header
+                # Format string explanation:
+                # ! = Big-Endian
+                # B = 1 byte unsigned char
+                # H = 2 byte unsigned short (Sequence Number)
+                # I = 4 byte unsigned int (Timestamp)
+                # I = 4 byte unsigned int (SSRC)
+                rtp_header = struct.pack(
+                    "!BBHII", 
+                    byte0, 
+                    byte1, 
+                    sequence_number, 
+                    timestamp, 
+                    ssrc
+                )
                 
-    #             # Combine Header and Audio Payload
-    #             rtp_packet = rtp_header + payload
+                # Combine Header and Audio Payload
+                rtp_packet = rtp_header + payload
                 
-    #             # 5. Transmit to Asterisk Port
-    #             sock.sendto(rtp_packet, (target_ip, target_port))
+                # 5. Transmit to Asterisk Port
+                self.sock.sendto(rtp_packet, (self.ip, self.port))
                 
-    #             # 6. Increment Variables for Next Packet
-    #             sequence_number = (sequence_number + 1) & 0xFFFF # Keep within 16-bit bounds
-    #             timestamp += CHUNK_SIZE # Advance timestamp by number of samples sent
-    #             packet_count += 1
+                # 6. Increment Variables for Next Packet
+                sequence_number = (sequence_number + 1) & 0xFFFF # Keep within 16-bit bounds
+                timestamp += CHUNK_SIZE # Advance timestamp by number of samples sent
+                packet_count += 1
                 
-    #             # 7. Strict Timing Loop to maintain 20ms pacing
-    #             next_transmission = start_time + (packet_count * FRAME_DURATION)
-    #             sleep_time = next_transmission - time.time()
-    #             if sleep_time > 0:
-    #                 time.sleep(sleep_time)
+                # 7. Strict Timing Loop to maintain 20ms pacing
+                next_transmission = start_time + (packet_count * FRAME_DURATION)
+                sleep_time = next_transmission - time.time()
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
 
-    #     #sock.close()
-    #     print("Streaming completed successfully.")
+        #sock.close()
+        print("Streaming completed successfully.")
                 
 class Sampler:
     def __init__(self, input_rate, output_rate):
