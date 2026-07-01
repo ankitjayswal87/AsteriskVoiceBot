@@ -20,6 +20,8 @@ from openai import OpenAI
 #import io
 import config as cfg
 import library
+import threading
+tts_stop_events = {}   # {external_media_port: threading.Event()}
 
 #read config parameters
 HOST = cfg.BOT_SERVER
@@ -89,8 +91,45 @@ def speech_to_text(input_file, output_file):
 
     return stt_data
 
+def start_tts(voice, text_data, external_media_port):
+    event = tts_stop_events.setdefault(
+        external_media_port, threading.Event()
+    )
+    event.clear()
+
+    threading.Thread(
+        target=text_to_speech,
+        args=(voice, text_data, external_media_port, event),
+        daemon=True
+    ).start()
+    
+def stop_tts(external_media_port):
+    event = tts_stop_events.get(external_media_port)
+    if event:
+        event.set()
+
+def text_to_speech(voice, text_data, external_media_port, stop_event):
+    state = None
+    sampler = library.Sampler(24000, 8000)
+    streamer = library.RTPStreamer(sock, "127.0.0.1", external_media_port)
+
+    with client.audio.speech.with_streaming_response.create(
+        model=TTS_MODEL,
+        voice=voice,
+        input=text_data,
+        response_format="pcm"
+    ) as response:
+
+        for chunk in response.iter_bytes(chunk_size=960):
+            if stop_event.is_set():
+                print("STOPPING TTS AS USER INTERRUPTED IT")
+                break
+
+            ulaw, state = sampler.pcm24k_to_ulaw(chunk, state)
+            streamer.send_ulaw(ulaw)
+
 #performs tts operation
-def text_to_speech(voice,text_data,external_media_port):
+def text_to_speech_old(voice,text_data,external_media_port):
     try:
         state = None
         sampler = library.Sampler(24000,8000)
@@ -140,6 +179,11 @@ async def handle_voice_stream(websocket):
                 #print(decoded_audio)
                 with open("/tmp/"+call_id+".raw", "ab") as f:
                     f.write(decoded_audio)
+            elif event=='talk_start':
+                call_id = message['talk_start']['callSid']
+                external_media_port = int(message['talk_start']['external_media_port'])
+                stop_tts(external_media_port)
+                print("stopping tts------")
             elif event=='talk_end':
                 call_id = message['talk_end']['callSid']
                 external_media_port = int(message['talk_end']['external_media_port'])
@@ -170,9 +214,11 @@ async def handle_voice_stream(websocket):
                         print("LLM Answer: "+llm_response)
 
                         #TTS
-                        text_to_speech(TTS_VOICE,llm_response,external_media_port)
+                        #text_to_speech(TTS_VOICE,llm_response,external_media_port)
+                        start_tts(TTS_VOICE, llm_response, external_media_port)
                     else:
-                        text_to_speech(TTS_VOICE,"kindly speak in detail so I can understand, can you please repeat, I can understand English, Hindi and Gujarati languages.",external_media_port)
+                        #text_to_speech(TTS_VOICE,"kindly speak in detail so I can understand, can you please repeat, I can understand English, Hindi and Gujarati languages.",external_media_port)
+                        start_tts(TTS_VOICE, "kindly speak in detail so I can understand, can you please repeat, I can understand English, Hindi and Gujarati languages.", external_media_port)
 
             elif event=='stop':
                 call_id = message['stop']['callSid']
