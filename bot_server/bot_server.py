@@ -21,7 +21,13 @@ from openai import OpenAI
 import config as cfg
 import library
 import threading
+import queue
 tts_stop_events = {}   # {external_media_port: threading.Event()}
+tts_queues = {}      # {external_media_port: Queue()}
+tts_workers = {}     # {external_media_port: Thread()}
+from langchain.agents import create_agent
+from langchain.tools import tool
+from langchain_openai import ChatOpenAI
 
 #read config parameters
 HOST = cfg.BOT_SERVER
@@ -38,6 +44,117 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 current_dir = os.getcwd()
 prompt_path = os.path.join(current_dir, "..", "prompts/")
+
+llm = ChatOpenAI(
+    model="gpt-4o-mini",
+    streaming=True,
+)
+
+agent = create_agent(
+    model=llm,
+    system_prompt="You are a helpful voice assistant.",
+)
+
+def tts_worker(external_media_port):
+    q = tts_queues[external_media_port]
+
+    while True:
+        item = q.get()
+
+        if item is None:
+            break
+
+        voice, text = item
+
+        event = tts_stop_events.setdefault(
+            external_media_port,
+            threading.Event()
+        )
+        event.clear()
+
+        text_to_speech(
+            voice,
+            text,
+            external_media_port,
+            event
+        )
+
+        q.task_done()
+        
+def ensure_tts_worker(external_media_port):
+    if external_media_port not in tts_queues:
+        tts_queues[external_media_port] = queue.Queue()
+
+    if (
+        external_media_port not in tts_workers
+        or not tts_workers[external_media_port].is_alive()
+    ):
+        worker = threading.Thread(
+            target=tts_worker,
+            args=(external_media_port,),
+            daemon=True,
+        )
+        worker.start()
+        tts_workers[external_media_port] = worker
+
+async def call_agent(query, external_media_port):
+    ensure_tts_worker(external_media_port)
+
+    buffer = ""
+
+    async for event in agent.astream_events(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": query,
+                }
+            ]
+        },
+        version="v2",
+    ):
+
+        if event["event"] == "on_chat_model_stream":
+            chunk = event["data"]["chunk"]
+
+            if chunk.content:
+                buffer += chunk.content
+
+                if len(buffer) > 50 or buffer.endswith((".", "!", "?")):
+                    tts_queues[external_media_port].put(
+                        (TTS_VOICE, buffer)
+                    )
+                    buffer = ""
+
+    if buffer:
+        tts_queues[external_media_port].put(
+            (TTS_VOICE, buffer)
+        )
+
+async def call_agent_old(query,external_media_port):
+    buffer = ""
+    async for event in agent.astream_events(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": query,
+                }
+            ]
+        },
+        version="v2",
+    ):
+        if event["event"] == "on_chat_model_stream":
+            chunk = event["data"]["chunk"]
+
+            if chunk.content:
+                #print(chunk.content, end="", flush=True)
+                buffer += chunk.content
+                if len(buffer) > 150 or buffer.endswith((".", "!", "?")):
+                    print("----123----")
+                    print(buffer)
+                    start_tts(TTS_VOICE, buffer, external_media_port)
+                    buffer = ""
 
 #detects language in stt data - allows to control enable/disable language support
 def is_supported_language(text):
@@ -102,8 +219,24 @@ def start_tts(voice, text_data, external_media_port):
         args=(voice, text_data, external_media_port, event),
         daemon=True
     ).start()
-    
+
 def stop_tts(external_media_port):
+    event = tts_stop_events.get(external_media_port)
+
+    if event:
+        event.set()
+
+    q = tts_queues.get(external_media_port)
+
+    if q:
+        while not q.empty():
+            try:
+                q.get_nowait()
+                q.task_done()
+            except queue.Empty:
+                break
+
+def stop_tts_old(external_media_port):
     event = tts_stop_events.get(external_media_port)
     if event:
         event.set()
@@ -143,18 +276,14 @@ def text_to_speech_old(voice,text_data,external_media_port):
         print("tts not done")
         streamer.stream_ulaw_audio(prompt_path+'not_able.ulaw')
 
+async def llm_query(query,external_media_port):
+    #asyncio.run(call_agent(query,external_media_port))
+    await call_agent(query,external_media_port)
+
 #performs intelligence lookup for reply
-def llm_query(LLM_SERVER,LLM_PORT,stt_data):
+def llm_query_old(LLM_SERVER,LLM_PORT,stt_data):
     url = "http://"+LLM_SERVER+":"+LLM_PORT+"/agentic_ai/bus_booking"
     payload = json.dumps({"thread_id": "call123abc","user_id":"test123","query": stt_data,"model": "openai"})
-    headers = {'Content-Type': 'application/json'}
-    response = requests.request("POST", url, headers=headers, data=payload)
-    data = json.loads(response.text)
-    return data['response']
-
-def llm_query_old(LLM_SERVER,LLM_PORT,vector_db,stt_data):
-    url = "http://"+LLM_SERVER+":"+LLM_PORT+"/lang_chain_api/ask_to_vector_db_rag"
-    payload = json.dumps({"vector_db": vector_db,"query": stt_data})
     headers = {'Content-Type': 'application/json'}
     response = requests.request("POST", url, headers=headers, data=payload)
     data = json.loads(response.text)
@@ -210,12 +339,13 @@ async def handle_voice_stream(websocket):
                         stt_event = {'event':'stt','sequenceNumber': 2,'stt':{'callSid':call_id,'reason':'','language':lang},'streamSid':''}
                         await websocket.send(json.dumps(stt_event))
                         # LLM query
-                        llm_response = llm_query(LLM_SERVER,LLM_PORT,stt_data)
-                        print("LLM Answer: "+llm_response)
+                        #llm_response = llm_query(LLM_SERVER,LLM_PORT,stt_data)
+                        asyncio.create_task(llm_query(stt_data, external_media_port))
+                        #print("LLM Answer: "+llm_response)
 
                         #TTS
                         #text_to_speech(TTS_VOICE,llm_response,external_media_port)
-                        start_tts(TTS_VOICE, llm_response, external_media_port)
+                        #start_tts(TTS_VOICE, llm_response, external_media_port)
                     else:
                         #text_to_speech(TTS_VOICE,"kindly speak in detail so I can understand, can you please repeat, I can understand English, Hindi and Gujarati languages.",external_media_port)
                         start_tts(TTS_VOICE, "kindly speak in detail so I can understand, can you please repeat, I can understand English, Hindi and Gujarati languages.", external_media_port)

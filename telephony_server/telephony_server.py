@@ -218,7 +218,11 @@ async def ari_events(user,password,app):
                 media_info = external_media_channels.get(playback_channel_id)
                 external_media_port = media_info["port"]
                 talk_start_event = {'event':'talk_start','talk_start':{'accountSid':'1234','streamSid':'','callSid':playback_channel_id,'from':'','to':'','external_media_port':external_media_port},'streamSid':''}
-                await ws_bot_client.send(json.dumps(talk_start_event))
+                try:
+                    await ws_bot_client.send(json.dumps(talk_start_event))
+                except websockets.exceptions.ConnectionClosed:
+                    await connect_bot_websocket()
+                    await ws_bot_client.send(json.dumps(talk_start_event))
 
                 #ari.add_channel_in_bridge(bridge_id,incoming_sip_channel_id)
             elif(event_type=='ChannelTalkingFinished'):
