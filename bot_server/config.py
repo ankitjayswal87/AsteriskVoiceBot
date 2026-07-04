@@ -4,5 +4,5 @@ LLM_SERVER = 'localhost'
 LLM_PORT = '5006'
 STT_MODEL = 'gpt-4o-transcribe'
 TTS_MODEL = 'gpt-4o-mini-tts'
-TTS_VOICE = 'nova'
+TTS_VOICE = 'alloy'
 LANGUAGE_SUPPORT = ['en','hi','gu']

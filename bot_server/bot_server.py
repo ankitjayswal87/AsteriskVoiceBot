@@ -1,23 +1,13 @@
 import asyncio
 import socket
-import struct
-import audioop
 import websockets
-import requests
 import json
 from datetime import datetime
 import base64
 import os
-import time
-import random
 import subprocess
 import langid
-#import threading
-#import queue
-#import shutil
 from openai import OpenAI
-#from pydub import AudioSegment
-#import io
 import config as cfg
 import library
 import threading
@@ -98,9 +88,13 @@ def ensure_tts_worker(external_media_port):
         tts_workers[external_media_port] = worker
 
 async def call_agent(query, external_media_port):
+    now = datetime.now()
+    print("ENSURE TTS WORKER:", now.strftime("%H:%M:%S"))
     ensure_tts_worker(external_media_port)
 
     buffer = ""
+    now = datetime.now()
+    print("CALL AGENT:", now.strftime("%H:%M:%S"))
 
     async for event in agent.astream_events(
         {
@@ -120,7 +114,9 @@ async def call_agent(query, external_media_port):
             if chunk.content:
                 buffer += chunk.content
 
-                if len(buffer) > 50 or buffer.endswith((".", "!", "?")):
+                if len(buffer) > 70 or buffer.endswith((".", "!", "?")):
+                    # now = datetime.now()
+                    # print("BUFFER---:", now.strftime("%H:%M:%S"))
                     tts_queues[external_media_port].put(
                         (TTS_VOICE, buffer)
                     )
@@ -130,31 +126,6 @@ async def call_agent(query, external_media_port):
         tts_queues[external_media_port].put(
             (TTS_VOICE, buffer)
         )
-
-async def call_agent_old(query,external_media_port):
-    buffer = ""
-    async for event in agent.astream_events(
-        {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": query,
-                }
-            ]
-        },
-        version="v2",
-    ):
-        if event["event"] == "on_chat_model_stream":
-            chunk = event["data"]["chunk"]
-
-            if chunk.content:
-                #print(chunk.content, end="", flush=True)
-                buffer += chunk.content
-                if len(buffer) > 150 or buffer.endswith((".", "!", "?")):
-                    print("----123----")
-                    print(buffer)
-                    start_tts(TTS_VOICE, buffer, external_media_port)
-                    buffer = ""
 
 #detects language in stt data - allows to control enable/disable language support
 def is_supported_language(text):
@@ -236,11 +207,6 @@ def stop_tts(external_media_port):
             except queue.Empty:
                 break
 
-def stop_tts_old(external_media_port):
-    event = tts_stop_events.get(external_media_port)
-    if event:
-        event.set()
-
 def text_to_speech(voice, text_data, external_media_port, stop_event):
     state = None
     sampler = library.Sampler(24000, 8000)
@@ -254,6 +220,8 @@ def text_to_speech(voice, text_data, external_media_port, stop_event):
     ) as response:
 
         for chunk in response.iter_bytes(chunk_size=960):
+            # now = datetime.now()
+            # print("TTS RESPONSE:", now.strftime("%H:%M:%S"))
             if stop_event.is_set():
                 print("STOPPING TTS AS USER INTERRUPTED IT")
                 break
@@ -261,33 +229,8 @@ def text_to_speech(voice, text_data, external_media_port, stop_event):
             ulaw, state = sampler.pcm24k_to_ulaw(chunk, state)
             streamer.send_ulaw(ulaw)
 
-#performs tts operation
-def text_to_speech_old(voice,text_data,external_media_port):
-    try:
-        state = None
-        sampler = library.Sampler(24000,8000)
-        streamer = library.RTPStreamer(sock, "127.0.0.1", external_media_port)
-        
-        with client.audio.speech.with_streaming_response.create(model=TTS_MODEL,voice=voice,input=text_data,response_format="pcm") as response:
-            for chunk in response.iter_bytes(chunk_size=960):
-                ulaw, state = sampler.pcm24k_to_ulaw(chunk, state)
-                streamer.send_ulaw(ulaw)
-    except Exception as e:
-        print("tts not done")
-        streamer.stream_ulaw_audio(prompt_path+'not_able.ulaw')
-
 async def llm_query(query,external_media_port):
-    #asyncio.run(call_agent(query,external_media_port))
     await call_agent(query,external_media_port)
-
-#performs intelligence lookup for reply
-def llm_query_old(LLM_SERVER,LLM_PORT,stt_data):
-    url = "http://"+LLM_SERVER+":"+LLM_PORT+"/agentic_ai/bus_booking"
-    payload = json.dumps({"thread_id": "call123abc","user_id":"test123","query": stt_data,"model": "openai"})
-    headers = {'Content-Type': 'application/json'}
-    response = requests.request("POST", url, headers=headers, data=payload)
-    data = json.loads(response.text)
-    return data['response']
 
 async def handle_voice_stream(websocket):
     print("Call connected to Bot")
@@ -312,16 +255,10 @@ async def handle_voice_stream(websocket):
                 call_id = message['talk_start']['callSid']
                 external_media_port = int(message['talk_start']['external_media_port'])
                 stop_tts(external_media_port)
-                print("stopping tts------")
             elif event=='talk_end':
                 call_id = message['talk_end']['callSid']
                 external_media_port = int(message['talk_end']['external_media_port'])
                 print("EXTERNAL MEDIA PORT:"+str(external_media_port))
-                
-                # stream_ulaw_audio(sock,"/var/lib/asterisk/sounds/num-was-successfully.ulaw", "127.0.0.1", external_media_port)
-                # stream_ulaw_audio(sock,"/var/lib/asterisk/sounds/num-was-successfully.ulaw", "127.0.0.1", external_media_port)
-                # stream_ulaw_audio(sock,"/var/lib/asterisk/sounds/num-was-successfully.ulaw", "127.0.0.1", external_media_port)
-                # continue
                 input_file = '/tmp/'+call_id+'.raw'
                 output_file = '/tmp/'+call_id+'.wav'
 
@@ -332,24 +269,16 @@ async def handle_voice_stream(websocket):
                     # STT
                     stt_data = speech_to_text(input_file,output_file)
                     print("STT Data: "+stt_data)
-                    lang_status,lang = is_supported_language(stt_data)
-                    #print("LANGUAGE:"+str(lang))
+                    #lang_status,lang = is_supported_language(stt_data)
 
-                    if stt_data and lang_status and len(stt_data)>=3:
-                        stt_event = {'event':'stt','sequenceNumber': 2,'stt':{'callSid':call_id,'reason':'','language':lang},'streamSid':''}
-                        await websocket.send(json.dumps(stt_event))
-                        # LLM query
-                        #llm_response = llm_query(LLM_SERVER,LLM_PORT,stt_data)
+                    if stt_data and len(stt_data)>=3:
+                        # stt_event = {'event':'stt','sequenceNumber': 2,'stt':{'callSid':call_id,'reason':'','language':lang},'streamSid':''}
+                        # await websocket.send(json.dumps(stt_event))
+                        now = datetime.now()
+                        print("LLM QUERY START:", now.strftime("%H:%M:%S"))
                         asyncio.create_task(llm_query(stt_data, external_media_port))
-                        #print("LLM Answer: "+llm_response)
-
-                        #TTS
-                        #text_to_speech(TTS_VOICE,llm_response,external_media_port)
-                        #start_tts(TTS_VOICE, llm_response, external_media_port)
                     else:
-                        #text_to_speech(TTS_VOICE,"kindly speak in detail so I can understand, can you please repeat, I can understand English, Hindi and Gujarati languages.",external_media_port)
                         start_tts(TTS_VOICE, "kindly speak in detail so I can understand, can you please repeat, I can understand English, Hindi and Gujarati languages.", external_media_port)
-
             elif event=='stop':
                 call_id = message['stop']['callSid']
                 #await websocket.close()
