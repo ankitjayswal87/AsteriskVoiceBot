@@ -15,6 +15,8 @@ import queue
 tts_stop_events = {}   # {external_media_port: threading.Event()}
 tts_queues = {}      # {external_media_port: Queue()}
 tts_workers = {}     # {external_media_port: Thread()}
+ulaw_queues = {}
+rtp_workers = {}
 from langchain.agents import create_agent
 from langchain.tools import tool
 from langchain_openai import ChatOpenAI
@@ -45,6 +47,26 @@ agent = create_agent(
     system_prompt="You are a helpful voice assistant.",
 )
 
+def rtp_worker(external_media_port):
+    q = ulaw_queues[external_media_port]
+
+    streamer = library.RTPStreamer(
+        sock,
+        "127.0.0.1",
+        external_media_port
+    )
+
+    while True:
+        item = q.get()
+
+        if item is None:
+            print("STOPPING RTP WORKER")
+            break
+
+        streamer.send_ulaw(item)
+
+        q.task_done()
+
 def tts_worker(external_media_port):
     q = tts_queues[external_media_port]
 
@@ -52,6 +74,7 @@ def tts_worker(external_media_port):
         item = q.get()
 
         if item is None:
+            print("STOPPING TTS WORKER")
             break
 
         voice, text = item
@@ -71,6 +94,26 @@ def tts_worker(external_media_port):
 
         q.task_done()
         
+def ensure_rtp_worker(external_media_port):
+
+    if external_media_port not in ulaw_queues:
+        ulaw_queues[external_media_port] = queue.Queue()
+
+    if (
+        external_media_port not in rtp_workers
+        or not rtp_workers[external_media_port].is_alive()
+    ):
+
+        worker = threading.Thread(
+            target=rtp_worker,
+            args=(external_media_port,),
+            daemon=True,
+        )
+
+        worker.start()
+
+        rtp_workers[external_media_port] = worker
+        
 def ensure_tts_worker(external_media_port):
     if external_media_port not in tts_queues:
         tts_queues[external_media_port] = queue.Queue()
@@ -88,13 +131,13 @@ def ensure_tts_worker(external_media_port):
         tts_workers[external_media_port] = worker
 
 async def call_agent(query, external_media_port):
-    now = datetime.now()
-    print("ENSURE TTS WORKER:", now.strftime("%H:%M:%S"))
+    #now = datetime.now()
+    #print("ENSURE TTS WORKER:", now.strftime("%H:%M:%S"))
     ensure_tts_worker(external_media_port)
 
     buffer = ""
     now = datetime.now()
-    print("CALL AGENT:", now.strftime("%H:%M:%S"))
+    #print("CALL AGENT:", now.strftime("%H:%M:%S"))
 
     async for event in agent.astream_events(
         {
@@ -190,8 +233,35 @@ def start_tts(voice, text_data, external_media_port):
         args=(voice, text_data, external_media_port, event),
         daemon=True
     ).start()
-
+    
 def stop_tts(external_media_port):
+
+    event = tts_stop_events.get(external_media_port)
+
+    if event:
+        event.set()
+
+    q = tts_queues.get(external_media_port)
+
+    if q:
+        while not q.empty():
+            try:
+                q.get_nowait()
+                q.task_done()
+            except queue.Empty:
+                break
+
+    rtp_q = ulaw_queues.get(external_media_port)
+
+    if rtp_q:
+        while not rtp_q.empty():
+            try:
+                rtp_q.get_nowait()
+                rtp_q.task_done()
+            except queue.Empty:
+                break
+
+def stop_tts_old(external_media_port):
     event = tts_stop_events.get(external_media_port)
 
     if event:
@@ -208,6 +278,30 @@ def stop_tts(external_media_port):
                 break
 
 def text_to_speech(voice, text_data, external_media_port, stop_event):
+
+    ensure_rtp_worker(external_media_port)
+
+    state = None
+    sampler = library.Sampler(24000, 8000)
+
+    with client.audio.speech.with_streaming_response.create(
+        model=TTS_MODEL,
+        voice=voice,
+        input=text_data,
+        response_format="pcm"
+    ) as response:
+
+        for chunk in response.iter_bytes(chunk_size=960):
+
+            if stop_event.is_set():
+                print("STOPPING TTS")
+                break
+
+            ulaw, state = sampler.pcm24k_to_ulaw(chunk, state)
+
+            ulaw_queues[external_media_port].put(ulaw)
+
+def text_to_speech_old(voice, text_data, external_media_port, stop_event):
     state = None
     sampler = library.Sampler(24000, 8000)
     streamer = library.RTPStreamer(sock, "127.0.0.1", external_media_port)
@@ -258,7 +352,7 @@ async def handle_voice_stream(websocket):
             elif event=='talk_end':
                 call_id = message['talk_end']['callSid']
                 external_media_port = int(message['talk_end']['external_media_port'])
-                print("EXTERNAL MEDIA PORT:"+str(external_media_port))
+                #print("EXTERNAL MEDIA PORT:"+str(external_media_port))
                 input_file = '/tmp/'+call_id+'.raw'
                 output_file = '/tmp/'+call_id+'.wav'
 
@@ -274,8 +368,8 @@ async def handle_voice_stream(websocket):
                     if stt_data and len(stt_data)>=3:
                         # stt_event = {'event':'stt','sequenceNumber': 2,'stt':{'callSid':call_id,'reason':'','language':lang},'streamSid':''}
                         # await websocket.send(json.dumps(stt_event))
-                        now = datetime.now()
-                        print("LLM QUERY START:", now.strftime("%H:%M:%S"))
+                        # now = datetime.now()
+                        # print("LLM QUERY START:", now.strftime("%H:%M:%S"))
                         asyncio.create_task(llm_query(stt_data, external_media_port))
                     else:
                         start_tts(TTS_VOICE, "kindly speak in detail so I can understand, can you please repeat, I can understand English, Hindi and Gujarati languages.", external_media_port)
@@ -283,6 +377,21 @@ async def handle_voice_stream(websocket):
                 call_id = message['stop']['callSid']
                 #await websocket.close()
                 print("Stop:"+call_id)
+                if external_media_port in ulaw_queues:
+                    ulaw_queues[external_media_port].put(None)
+
+                if external_media_port in tts_queues:
+                    tts_queues[external_media_port].put(None)
+                    
+                print("workers stopped")
+                    
+                # ulaw_queues.pop(external_media_port, None)
+                # rtp_workers.pop(external_media_port, None)
+
+                # tts_queues.pop(external_media_port, None)
+                # tts_workers.pop(external_media_port, None)
+
+                # tts_stop_events.pop(external_media_port, None)
     except websockets.exceptions.ConnectionClosed:
         pass
     except Exception as e:

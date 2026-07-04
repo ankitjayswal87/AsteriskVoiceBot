@@ -18,14 +18,12 @@ class RTPStreamer:
         self.packet_count = 0
         
     def send_ulaw(self, ulaw):
-        while len(ulaw):
-            payload = ulaw[:160]
-            ulaw = ulaw[160:]
+        payload = ulaw
 
-            if len(payload) < 160:
-                payload += b'\xff' * (160-len(payload))
+        if len(payload) < 160:
+            payload += b'\xff' * (160-len(payload))
 
-            header = struct.pack(
+        header = struct.pack(
                 "!BBHII",
                 0x80,
                 0,
@@ -34,17 +32,46 @@ class RTPStreamer:
                 self.ssrc,
             )
 
-            self.sock.sendto(header + payload, (self.ip, self.port))
+        self.sock.sendto(header + payload, (self.ip, self.port))
 
-            self.seq = (self.seq + 1) & 0xffff
-            self.timestamp += 160
+        self.seq = (self.seq + 1) & 0xffff
+        self.timestamp += 160
 
-            self.packet_count += 1
+        self.packet_count += 1
 
-            next_time = self.start + self.packet_count * 0.02
-            delay = next_time - time.monotonic()
-            if delay > 0:
-                time.sleep(delay)
+        next_time = self.start + self.packet_count * 0.02
+        delay = next_time - time.monotonic()
+        if delay > 0:
+            time.sleep(delay)
+        
+    # def send_ulaw(self, ulaw):
+    #     while len(ulaw):
+    #         payload = ulaw[:160]
+    #         ulaw = ulaw[160:]
+
+    #         if len(payload) < 160:
+    #             payload += b'\xff' * (160-len(payload))
+
+    #         header = struct.pack(
+    #             "!BBHII",
+    #             0x80,
+    #             0,
+    #             self.seq,
+    #             self.timestamp,
+    #             self.ssrc,
+    #         )
+
+    #         self.sock.sendto(header + payload, (self.ip, self.port))
+
+    #         self.seq = (self.seq + 1) & 0xffff
+    #         self.timestamp += 160
+
+    #         self.packet_count += 1
+
+    #         next_time = self.start + self.packet_count * 0.02
+    #         delay = next_time - time.monotonic()
+    #         if delay > 0:
+    #             time.sleep(delay)
                 
     # def stream_ulaw_audio_bytes(sock, ulaw_data, target_ip, target_port):
     #     """
