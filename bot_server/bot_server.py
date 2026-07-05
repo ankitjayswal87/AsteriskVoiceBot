@@ -1,17 +1,21 @@
 import asyncio
 import socket
+import subprocess
 import websockets
 import json
 from datetime import datetime
 import base64
 import os
-import subprocess
 import langid
 from openai import OpenAI
 import config as cfg
 import library
 import threading
 import queue
+import numpy as np
+import soxr
+import audioop
+import g711
 tts_stop_events = {}   # {external_media_port: threading.Event()}
 tts_queues = {}      # {external_media_port: Queue()}
 tts_workers = {}     # {external_media_port: Thread()}
@@ -297,7 +301,18 @@ def text_to_speech(voice, text_data, external_media_port, stop_event):
                 print("STOPPING TTS")
                 break
 
-            ulaw, state = sampler.pcm24k_to_ulaw(chunk, state)
+            #ulaw, state = sampler.pcm24k_to_ulaw(chunk, state)
+            
+            # pcm = np.frombuffer(chunk, dtype=np.int16)
+            # pcm8 = soxr.resample(pcm,24000,8000)
+            # pcm8 = pcm8.astype(np.int16)
+            # ulaw = audioop.lin2ulaw(pcm8.tobytes(), 2)
+            
+            pcm = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
+            pcm8 = soxr.resample(pcm,24000,8000)
+            #pcm8 = pcm8.astype(np.int16)
+            #ulaw = audioop.lin2ulaw(pcm8.tobytes(), 2)
+            ulaw = g711.encode_ulaw(pcm8)
 
             ulaw_queues[external_media_port].put(ulaw)
 
