@@ -16,11 +16,16 @@ import numpy as np
 import soxr
 import audioop
 import g711
+from openai import AsyncOpenAI
+import redis
+import time
 tts_stop_events = {}   # {external_media_port: threading.Event()}
 tts_queues = {}      # {external_media_port: Queue()}
 tts_workers = {}     # {external_media_port: Thread()}
 ulaw_queues = {}
 rtp_workers = {}
+stt_queues = {}      # external_media_port -> asyncio.Queue
+stt_tasks = {}       # external_media_port -> asyncio.Task
 from langchain.agents import create_agent
 from langchain.tools import tool
 from langchain_openai import ChatOpenAI
@@ -41,6 +46,8 @@ sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 current_dir = os.getcwd()
 prompt_path = os.path.join(current_dir, "..", "prompts/")
 
+r = redis.Redis(host=cfg.REDIS_HOST, port=cfg.REDIS_PORT, db=0)
+
 llm = ChatOpenAI(
     model="gpt-4o-mini",
     streaming=True,
@@ -50,6 +57,94 @@ agent = create_agent(
     model=llm,
     system_prompt="You are a helpful voice assistant.",
 )
+
+client_stt = AsyncOpenAI()
+
+async def stt_worker(external_media_port):
+
+    queue = stt_queues[external_media_port]
+
+    async with client_stt.realtime.connect(model="gpt-realtime") as conn:
+
+        await conn.session.update(
+            session={
+                "type": "realtime",
+                "audio": {
+                    "input": {
+                        "format": {
+                            "type": "audio/pcmu"
+                        },
+                        "transcription": {
+                            "model": "gpt-4o-mini-transcribe"
+                        },
+                        "turn_detection": {
+                            "type": "server_vad"
+                        }
+                    }
+                }
+            }
+        )
+
+        #
+        # Ignore session.created
+        #
+        #await conn.recv()
+
+        async def receiver():
+
+            async for event in conn:
+
+                if event.type == "conversation.item.input_audio_transcription.delta":
+                    print("PARTIAL:", event.delta)
+
+                elif event.type == "conversation.item.input_audio_transcription.completed":
+
+                    print("FINAL:", event.transcript)
+                    #print(type(event.transcript))
+                    transcript = event.transcript
+                    if isinstance(transcript, bytes):
+                        transcript = transcript.decode("utf-8")
+
+
+                    #
+                    # Store in Redis
+                    #
+                    # r.set(
+                    #     f"stt:{external_media_port}",
+                    #     transcript,
+                    #     ex=300
+                    # )
+                    # print("DATA SET IN REDIS---")
+                    if transcript:
+                        asyncio.create_task(llm_query(transcript, external_media_port))
+                    else:
+                        start_tts(TTS_VOICE, "kindly speak in detail so I can understand, can you please repeat, I can understand English, Hindi and Gujarati languages.", external_media_port)
+
+                elif event.type == "error":
+                    print(event)
+
+        recv_task = asyncio.create_task(receiver())
+
+        try:
+
+            while True:
+
+                audio = await queue.get()
+
+                if audio is None:
+                    break
+
+                await conn.input_audio_buffer.append(
+                    audio=base64.b64encode(audio).decode("ascii")
+                )
+
+                queue.task_done()
+
+        finally:
+
+            await conn.input_audio_buffer.commit()
+
+            recv_task.cancel()
 
 def rtp_worker(external_media_port):
     q = ulaw_queues[external_media_port]
@@ -264,6 +359,16 @@ def stop_tts(external_media_port):
                 rtp_q.task_done()
             except queue.Empty:
                 break
+            
+    stt_q = stt_queues.get(external_media_port)
+
+    if stt_q:
+        while not stt_q.empty():
+            try:
+                stt_q.get_nowait()
+                stt_q.task_done()
+            except queue.Empty:
+                break
 
 def stop_tts_old(external_media_port):
     event = tts_stop_events.get(external_media_port)
@@ -347,19 +452,27 @@ async def handle_voice_stream(websocket):
         async for message in websocket:
             message = json.loads(message)
             event = message['event']
-            #print(event)
             if event=='start':
                 call_id = message['start']['callSid']
                 stream_id = message['start']['streamSid']
                 caller_number = message['start']['from']
                 did_number = message['start']['to']
+                external_media_port = int(message['start']['external_media_port'])
+                r.set(f"stt:{external_media_port}","",ex=300)
+                stt_queues[external_media_port] = asyncio.Queue()
+                stt_tasks[external_media_port] = asyncio.create_task(stt_worker(external_media_port))
             elif event=='media':
                 call_id = message['media']['callSid']
                 payload = message['media']['payload']
+                external_media_port = int(message['media']['external_media_port'])
                 decoded_audio = base64.b64decode(payload)
+                if external_media_port in stt_queues:
+                    await stt_queues[external_media_port].put(decoded_audio)
                 #print(decoded_audio)
-                with open("/tmp/"+call_id+".raw", "ab") as f:
-                    f.write(decoded_audio)
+                # print("LENGTH OF USER AUDIO---")
+                # print(len(decoded_audio))
+                # with open("/tmp/"+call_id+".raw", "ab") as f:
+                #     f.write(decoded_audio)
             elif event=='talk_start':
                 call_id = message['talk_start']['callSid']
                 external_media_port = int(message['talk_start']['external_media_port'])
@@ -367,27 +480,20 @@ async def handle_voice_stream(websocket):
             elif event=='talk_end':
                 call_id = message['talk_end']['callSid']
                 external_media_port = int(message['talk_end']['external_media_port'])
-                #print("EXTERNAL MEDIA PORT:"+str(external_media_port))
-                input_file = '/tmp/'+call_id+'.raw'
-                output_file = '/tmp/'+call_id+'.wav'
+                
+                # await stt_queues[external_media_port].put(None)
+                # await stt_tasks[external_media_port]
+                # del stt_tasks[external_media_port]
+                # del stt_queues[external_media_port]
 
-                # raw to wav file conversion
-                if os.path.exists(input_file):
-                    raw_to_wav_stt(input_file,output_file)
-
-                    # STT
-                    stt_data = speech_to_text(input_file,output_file)
-                    print("STT Data: "+stt_data)
-                    #lang_status,lang = is_supported_language(stt_data)
-
-                    if stt_data and len(stt_data)>=3:
-                        # stt_event = {'event':'stt','sequenceNumber': 2,'stt':{'callSid':call_id,'reason':'','language':lang},'streamSid':''}
-                        # await websocket.send(json.dumps(stt_event))
-                        # now = datetime.now()
-                        # print("LLM QUERY START:", now.strftime("%H:%M:%S"))
-                        asyncio.create_task(llm_query(stt_data, external_media_port))
-                    else:
-                        start_tts(TTS_VOICE, "kindly speak in detail so I can understand, can you please repeat, I can understand English, Hindi and Gujarati languages.", external_media_port)
+                # if stt_data and len(stt_data)>=3:
+                #     # stt_event = {'event':'stt','sequenceNumber': 2,'stt':{'callSid':call_id,'reason':'','language':lang},'streamSid':''}
+                #     # await websocket.send(json.dumps(stt_event))
+                #     now = datetime.now()
+                #     print("LLM QUERY START:", now.strftime("%H:%M:%S"))
+                #     #asyncio.create_task(llm_query(stt_data, external_media_port))
+                # else:
+                #     start_tts(TTS_VOICE, "kindly speak in detail so I can understand, can you please repeat, I can understand English, Hindi and Gujarati languages.", external_media_port)
             elif event=='stop':
                 call_id = message['stop']['callSid']
                 #await websocket.close()

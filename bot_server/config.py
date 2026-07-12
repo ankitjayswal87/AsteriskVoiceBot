@@ -5,4 +5,6 @@ LLM_PORT = '5006'
 STT_MODEL = 'gpt-4o-transcribe'
 TTS_MODEL = 'gpt-4o-mini-tts'
 TTS_VOICE = 'alloy'
+REDIS_HOST = '127.0.0.1'
+REDIS_PORT = 6379
 LANGUAGE_SUPPORT = ['en','hi','gu']
